@@ -1,0 +1,26 @@
+services:
+  backend:
+    build: .
+    container_name: clawcore_backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data                      # SQLite persists
+      - ./.agents/skills:/app/.agents/skills  # Hot-reload skills
+      - ./tmp:/app/tmp                        # Temp files
+      - ./outputs:/app/outputs                # Generated files
+    # Only exposing if necessary, frontend proxy works via Docker network internally
+    ports:
+      - "8080:8080" # Allows local development bypass if needed
+
+  frontend:
+    build: 
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: clawcore_frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"       # Web interface accessible at http://localhost
+    depends_on:
+      - backend

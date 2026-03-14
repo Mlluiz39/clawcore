@@ -15,10 +15,10 @@ export class CerebrasProvider implements LLMProvider {
   }
 
   async chat(messages: ChatMessage[]): Promise<string> {
-    logger.debug("Calling Cerebras", { model: "llama3.3-70b", msgs: messages.length });
+    logger.debug("Calling Cerebras", { model: "llama-3.3-70b", msgs: messages.length });
 
     const res = await this.client.chat.completions.create({
-      model: "llama3.3-70b",
+      model: "llama-3.3-70b",
       messages: messages as OpenAI.ChatCompletionMessageParam[],
       max_tokens: 4096,
     });
@@ -33,13 +33,13 @@ export class CerebrasProvider implements LLMProvider {
     tools: ToolDefinitionParam[]
   ): Promise<{ content: string | null; toolCalls: ToolCall[] }> {
     logger.debug("Calling Cerebras with tools", {
-      model: "llama3.3-70b",
+      model: "llama-3.3-70b",
       msgs: messages.length,
       tools: tools.length,
     });
 
     const res = await this.client.chat.completions.create({
-      model: "llama3.3-70b",
+      model: "llama-3.3-70b",
       messages: messages as OpenAI.ChatCompletionMessageParam[],
       tools: tools as OpenAI.ChatCompletionTool[],
       max_tokens: 4096,

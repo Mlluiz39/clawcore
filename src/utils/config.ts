@@ -20,7 +20,7 @@ export const config = {
     groq:     { apiKey: optional("GROQ_API_KEY", "") },
     gemini:   { apiKey: optional("GEMINI_API_KEY", "") },
     deepseek: { apiKey: optional("DEEPSEEK_API_KEY", "") },
-    openrouter: { apiKey: optional("OPENROUTER_API_KEY", "") },
+    openrouter: { apiKey: optional("OPENROUTER_API_KEY", ""), model: optional("OPENROUTER_MODEL", "google/gemini-2.0-flash-exp:free") },
     primary:  optional("PRIMARY_PROVIDER", "gemini"),
     fallbacks: optional("FALLBACK_PROVIDERS", "groq,cerebras,openrouter").split(",").map(p => p.trim()),
   },

@@ -52,15 +52,20 @@ export class ProviderFactory {
       try {
         const response = await provider.chat(messages);
         return { response, provider: provider.name };
-      } catch (err) {
+      } catch (err: any) {
         lastError = err;
         logger.warn(`Provider ${provider.name} failed, trying next in chain`, {
           error: String(err),
+          status: err?.status ?? err?.response?.status ?? "unknown",
+          code: err?.code ?? "unknown",
         });
       }
     }
 
-    logger.error("All providers in chain failed", { error: String(lastError) });
+    logger.error("All providers in chain failed", {
+      error: String(lastError),
+      status: (lastError as any)?.status ?? "unknown",
+    });
     throw new Error("Todos os provedores de IA falharam. Por favor, tente novamente mais tarde.");
   }
 
@@ -74,15 +79,20 @@ export class ProviderFactory {
       try {
         const result = await provider.chatWithTools(messages, tools);
         return { ...result, provider: provider.name };
-      } catch (err) {
+      } catch (err: any) {
         lastError = err;
         logger.warn(`Provider ${provider.name} (tools) failed, trying next in chain`, {
           error: String(err),
+          status: err?.status ?? err?.response?.status ?? "unknown",
+          code: err?.code ?? "unknown",
         });
       }
     }
 
-    logger.error("All providers in chain failed (tools)", { error: String(lastError) });
+    logger.error("All providers in chain failed (tools)", {
+      error: String(lastError),
+      status: (lastError as any)?.status ?? "unknown",
+    });
     throw new Error("Todos os provedores de IA falharam ao processar ferramentas.");
   }
 }

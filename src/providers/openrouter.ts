@@ -2,10 +2,12 @@
 import OpenAI from "openai";
 import { ChatMessage, LLMProvider, ToolCall, ToolDefinitionParam } from "./types";
 import { logger } from "../utils/logger";
+import { config } from "../utils/config";
 
 export class OpenRouterProvider implements LLMProvider {
   name = "openrouter";
   private client: OpenAI;
+  private model: string;
 
   constructor(apiKey: string) {
     this.client = new OpenAI({
@@ -16,15 +18,16 @@ export class OpenRouterProvider implements LLMProvider {
         "X-Title": "ClawCore",
       },
     });
+    this.model = config.providers.openrouter.model;
   }
 
   async chat(messages: ChatMessage[]): Promise<string> {
-    logger.debug("Calling OpenRouter", { model: "anthropic/claude-3.5-sonnet", msgs: messages.length });
+    logger.debug("Calling OpenRouter", { model: this.model, msgs: messages.length });
 
     const res = await this.client.chat.completions.create({
-      model: "anthropic/claude-3.5-sonnet",
+      model: this.model,
       messages: messages as OpenAI.ChatCompletionMessageParam[],
-      max_tokens: 1000,
+      max_tokens: 4096,
     });
 
     const content = res.choices[0]?.message?.content;
@@ -37,16 +40,16 @@ export class OpenRouterProvider implements LLMProvider {
     tools: ToolDefinitionParam[]
   ): Promise<{ content: string | null; toolCalls: ToolCall[] }> {
     logger.debug("Calling OpenRouter with tools", {
-      model: "anthropic/claude-3.5-sonnet",
+      model: this.model,
       msgs: messages.length,
       tools: tools.length,
     });
 
     const res = await this.client.chat.completions.create({
-      model: "anthropic/claude-3.5-sonnet",
+      model: this.model,
       messages: messages as OpenAI.ChatCompletionMessageParam[],
       tools: tools as OpenAI.ChatCompletionTool[],
-      max_tokens: 1000,
+      max_tokens: 4096,
     });
 
     const choice = res.choices[0]?.message;

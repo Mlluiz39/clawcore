@@ -6,6 +6,7 @@ import { CerebrasProvider } from "./cerebras";
 import { GroqProvider } from "./groq";
 import { GeminiProvider } from "./gemini";
 import { DeepSeekProvider } from "./deepseek";
+import { OpenRouterProvider } from "./openrouter";
 
 function buildProvider(name: string): LLMProvider {
   switch (name) {
@@ -17,64 +18,71 @@ function buildProvider(name: string): LLMProvider {
       return new GeminiProvider(config.providers.gemini.apiKey);
     case "deepseek":
       return new DeepSeekProvider(config.providers.deepseek.apiKey);
+    case "openrouter":
+      return new OpenRouterProvider(config.providers.openrouter.apiKey);
     default:
       throw new Error(`Unknown provider: ${name}`);
   }
 }
 
 export class ProviderFactory {
-  private primary: LLMProvider;
-  private fallback: LLMProvider;
+  private providers: LLMProvider[] = [];
 
   constructor() {
-    this.primary  = buildProvider(config.providers.primary);
-    this.fallback = buildProvider(config.providers.fallback);
-    logger.info("ProviderFactory ready", {
-      primary:  this.primary.name,
-      fallback: this.fallback.name,
-    });
+    try {
+      this.providers.push(buildProvider(config.providers.primary));
+      for (const fallbackName of config.providers.fallbacks) {
+        if (fallbackName && fallbackName !== config.providers.primary) {
+          this.providers.push(buildProvider(fallbackName));
+        }
+      }
+      logger.info("ProviderFactory ready", {
+        chain: this.providers.map(p => p.name),
+      });
+    } catch (err) {
+      logger.error("Failed to initialize ProviderFactory", { error: String(err) });
+      throw err;
+    }
   }
 
   async chat(messages: ChatMessage[]): Promise<{ response: string; provider: string }> {
-    try {
-      const response = await this.primary.chat(messages);
-      return { response, provider: this.primary.name };
-    } catch (err) {
-      logger.warn("Primary provider failed, trying fallback", {
-        primary: this.primary.name,
-        error: String(err),
-      });
+    let lastError: any = null;
 
+    for (const provider of this.providers) {
       try {
-        const response = await this.fallback.chat(messages);
-        return { response, provider: this.fallback.name };
-      } catch (fallbackErr) {
-        logger.error("Both providers failed", { error: String(fallbackErr) });
-        throw new Error("Both providers failed. Please try again later.");
+        const response = await provider.chat(messages);
+        return { response, provider: provider.name };
+      } catch (err) {
+        lastError = err;
+        logger.warn(`Provider ${provider.name} failed, trying next in chain`, {
+          error: String(err),
+        });
       }
     }
+
+    logger.error("All providers in chain failed", { error: String(lastError) });
+    throw new Error("Todos os provedores de IA falharam. Por favor, tente novamente mais tarde.");
   }
 
   async chatWithTools(
     messages: ChatMessage[],
     tools: ToolDefinitionParam[]
   ): Promise<{ content: string | null; toolCalls: ToolCall[]; provider: string }> {
-    try {
-      const result = await this.primary.chatWithTools(messages, tools);
-      return { ...result, provider: this.primary.name };
-    } catch (err) {
-      logger.warn("Primary provider failed (tools), trying fallback", {
-        primary: this.primary.name,
-        error: String(err),
-      });
+    let lastError: any = null;
 
+    for (const provider of this.providers) {
       try {
-        const result = await this.fallback.chatWithTools(messages, tools);
-        return { ...result, provider: this.fallback.name };
-      } catch (fallbackErr) {
-        logger.error("Both providers failed (tools)", { error: String(fallbackErr) });
-        throw new Error("Both providers failed. Please try again later.");
+        const result = await provider.chatWithTools(messages, tools);
+        return { ...result, provider: provider.name };
+      } catch (err) {
+        lastError = err;
+        logger.warn(`Provider ${provider.name} (tools) failed, trying next in chain`, {
+          error: String(err),
+        });
       }
     }
+
+    logger.error("All providers in chain failed (tools)", { error: String(lastError) });
+    throw new Error("Todos os provedores de IA falharam ao processar ferramentas.");
   }
 }

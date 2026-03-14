@@ -5,11 +5,14 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      - GOG_KEYRING_PASSWORD=${GOG_KEYRING_PASSWORD}
     volumes:
       - ./data:/app/data                      # SQLite persists
       - ./.agents/skills:/app/.agents/skills  # Hot-reload skills
       - ./tmp:/app/tmp                        # Temp files
       - ./outputs:/app/outputs                # Generated files
+      - ~/.config/gogcli:/root/.config/gogcli # Gogcli credentials
     # Only exposing if necessary, frontend proxy works via Docker network internally
     ports:
       - "8080:8080" # Allows local development bypass if needed

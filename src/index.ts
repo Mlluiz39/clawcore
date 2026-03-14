@@ -6,6 +6,9 @@ import { getDb } from "./memory/database";
 import { loadAllSkills, watchSkills } from "./skills/loader";
 import { ToolRegistry } from "./tools/registry";
 import { CreateFileTool } from "./tools/create-file";
+import { RunCommandTool } from "./tools/run-command";
+import { WhatsAppTool } from "./tools/whatsapp";
+import { WhatsAppClient } from "./utils/whatsapp-client";
 import { createWebServer } from "./web/server";
 import { config } from "./utils/config";
 import { logger } from "./utils/logger";
@@ -18,6 +21,7 @@ async function main() {
     path.resolve(process.cwd(), "data"),
     path.resolve(process.cwd(), "tmp"),
     path.resolve(process.cwd(), "public"),
+    path.resolve(process.cwd(), "data/whatsapp-session"),
     path.resolve(process.cwd(), ".agents", "skills"),
   ];
   for (const dir of dirs) {
@@ -34,9 +38,14 @@ async function main() {
   loadAllSkills();
   watchSkills();
 
+  // Init WhatsApp (will auto-reconnect if session exists)
+  WhatsAppClient.getInstance().init();
+
   // Init Tool Registry
   const toolRegistry = new ToolRegistry();
   toolRegistry.register(new CreateFileTool());
+  toolRegistry.register(new RunCommandTool());
+  toolRegistry.register(new WhatsAppTool());
 
   // Start web server
   const app = createWebServer(toolRegistry);

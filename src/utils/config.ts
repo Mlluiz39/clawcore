@@ -20,8 +20,9 @@ export const config = {
     groq:     { apiKey: optional("GROQ_API_KEY", "") },
     gemini:   { apiKey: optional("GEMINI_API_KEY", "") },
     deepseek: { apiKey: optional("DEEPSEEK_API_KEY", "") },
+    openrouter: { apiKey: optional("OPENROUTER_API_KEY", "") },
     primary:  optional("PRIMARY_PROVIDER", "gemini"),
-    fallback: optional("FALLBACK_PROVIDER", "groq"),
+    fallbacks: optional("FALLBACK_PROVIDERS", "groq,cerebras,openrouter").split(",").map(p => p.trim()),
   },
   agent: {
     maxContextMessages: parseInt(optional("MAX_CONTEXT_MESSAGES", "20")),

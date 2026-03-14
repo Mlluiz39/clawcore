@@ -6,3 +6,4 @@ outputs/
 *.db
 *.db-shm
 *.db-wal
+client_secret.json

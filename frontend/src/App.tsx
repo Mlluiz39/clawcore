@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Send, Menu, Settings, LogOut, PlusCircle, MessageSquare, Bot, Wifi, Trash2, Cpu, Database, Activity, Code2, AlertCircle } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Send, Menu, Settings, LogOut, PlusCircle, MessageSquare, Bot, Wifi, Trash2, Cpu, Database, Activity, Code2, AlertCircle, Mic, MicOff, Volume2, VolumeX, Loader2 } from 'lucide-react';
 import { marked } from 'marked';
 
 // --- API Helper ---
@@ -41,6 +41,7 @@ interface Message {
   content: string;
   timestamp?: string;
   isStreaming?: boolean;
+  isAudio?: boolean;
 }
 
 interface Conversation {
@@ -145,6 +146,19 @@ function ChatPanel({ onLogout }: { onLogout: () => void }) {
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [showStatus, setShowStatus] = useState(false);
+  
+  // Voice recording state
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Audio playback state
+  const [playingMsgIdx, setPlayingMsgIdx] = useState<number | null>(null);
+  const [loadingTtsIdx, setLoadingTtsIdx] = useState<number | null>(null);
+  const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -340,6 +354,82 @@ function ChatPanel({ onLogout }: { onLogout: () => void }) {
     }
   };
 
+  // ── Voice recording logic
+  const startRecording = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/ogg';
+      const mediaRecorder = new MediaRecorder(stream, { mimeType });
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+      mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
+      mediaRecorder.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop());
+        const blob = new Blob(audioChunksRef.current, { type: mimeType });
+        await transcribeAudio(blob);
+      };
+      mediaRecorder.start();
+      setIsRecording(true);
+      setRecordingSeconds(0);
+      recordingTimerRef.current = setInterval(() => setRecordingSeconds(s => s + 1), 1000);
+    } catch {
+      alert('Acesso ao microfone negado. Por favor, permita o uso do microfone.');
+    }
+  }, []);
+
+  const stopRecording = useCallback(() => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
+    if (recordingTimerRef.current) { clearInterval(recordingTimerRef.current); recordingTimerRef.current = null; }
+    setIsRecording(false);
+    setRecordingSeconds(0);
+  }, []);
+
+  const toggleRecording = useCallback(() => {
+    if (isRecording) stopRecording(); else startRecording();
+  }, [isRecording, startRecording, stopRecording]);
+
+  const transcribeAudio = async (blob: Blob) => {
+    setIsTranscribing(true);
+    try {
+      const formData = new FormData();
+      formData.append('audio', blob, 'voice.webm');
+      const token = localStorage.getItem('token');
+      const res = await fetch('/api/voice', { method: 'POST', headers: { 'Authorization': `Bearer ${token}` }, body: formData });
+      const data = await res.json();
+      if (data.text) {
+        setInput(prev => prev ? `${prev} ${data.text}` : data.text);
+        if (textareaRef.current) {
+          textareaRef.current.style.height = 'auto';
+          textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 200) + 'px';
+        }
+      }
+    } catch { console.error('Transcription error'); }
+    finally { setIsTranscribing(false); }
+  };
+
+  // ── TTS playback logic
+  const playTTS = async (text: string, msgIdx: number) => {
+    if (audioPlayerRef.current) { audioPlayerRef.current.pause(); audioPlayerRef.current = null; }
+    if (playingMsgIdx === msgIdx) { setPlayingMsgIdx(null); return; }
+    setLoadingTtsIdx(msgIdx);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch('/api/tts', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }, body: JSON.stringify({ text }) });
+      if (!res.ok) throw new Error('TTS failed');
+      const audioBlob = await res.blob();
+      const audioUrl = URL.createObjectURL(audioBlob);
+      const audio = new Audio(audioUrl);
+      audioPlayerRef.current = audio;
+      setPlayingMsgIdx(msgIdx);
+      audio.onended = () => { setPlayingMsgIdx(null); URL.revokeObjectURL(audioUrl); };
+      audio.onerror = () => { setPlayingMsgIdx(null); URL.revokeObjectURL(audioUrl); };
+      await audio.play();
+    } catch { setPlayingMsgIdx(null); }
+    finally { setLoadingTtsIdx(null); }
+  };
+
   return (
     <div className="flex h-screen overflow-hidden">
       {/* Sidebar Overlay (Mobile) */}
@@ -446,7 +536,7 @@ function ChatPanel({ onLogout }: { onLogout: () => void }) {
                 </div>
              ) : (
                 messages.map((msg, i) => (
-                  <MessageBubble key={i} message={msg} />
+                  <MessageBubble key={i} message={msg} msgIdx={i} onPlay={playTTS} isPlaying={playingMsgIdx === i} isLoadingTts={loadingTtsIdx === i} />
                 ))
              )}
               {isStreaming && messages[messages.length - 1]?.role !== 'assistant' && (
@@ -473,33 +563,57 @@ function ChatPanel({ onLogout }: { onLogout: () => void }) {
                 value={input}
                 onChange={handleTextareaInput}
                 onKeyDown={handleKeyDown}
-                placeholder="Message ClawCore..."
-                className="w-full glass-input rounded-2xl pl-5 pr-14 py-4 max-h-48 resize-none text-white placeholder-gray-500 overflow-hidden shadow-2xl focus:shadow-[0_0_20px_rgba(167,139,250,0.15)]"
+                placeholder={isRecording ? `Gravando... (${recordingSeconds}s) — clique para parar` : isTranscribing ? 'Transcrevendo áudio...' : 'Message ClawCore...'}
+                className={`w-full glass-input rounded-2xl pl-5 pr-28 py-4 max-h-48 resize-none text-white placeholder-gray-500 overflow-hidden shadow-2xl focus:shadow-[0_0_20px_rgba(167,139,250,0.15)] ${isRecording ? 'border border-red-500/40' : ''}`}
                 rows={1}
-                disabled={isStreaming}
+                disabled={isStreaming || isRecording || isTranscribing}
               />
-              <button
-                onClick={() => sendMessage()}
-                disabled={!input.trim() || isStreaming}
-                className="absolute right-3 bottom-3 p-2 rounded-xl bg-primary text-white hover:bg-primary/90 disabled:opacity-50 disabled:hover:bg-primary transition-colors"
-               >
-                 <Send size={18} />
-              </button>
+              <div className="absolute right-3 bottom-3 flex items-center gap-1.5">
+                <button
+                  id="voice-recording-btn"
+                  onClick={toggleRecording}
+                  disabled={isStreaming || isTranscribing}
+                  title={isRecording ? `Parar gravação (${recordingSeconds}s)` : 'Gravar voz'}
+                  className={`p-2 rounded-xl transition-all ${
+                    isRecording 
+                      ? 'bg-red-500 text-white animate-pulse shadow-lg shadow-red-500/40' 
+                      : isTranscribing
+                        ? 'bg-yellow-500/20 text-yellow-400'
+                        : 'bg-white/5 text-gray-400 hover:bg-white/10 hover:text-white'
+                  } disabled:opacity-50`}
+                >
+                  {isTranscribing ? <Loader2 size={18} className="animate-spin" /> : isRecording ? <MicOff size={18} /> : <Mic size={18} />}
+                </button>
+                <button
+                  id="send-message-btn"
+                  onClick={() => sendMessage()}
+                  disabled={!input.trim() || isStreaming}
+                  className="p-2 rounded-xl bg-primary text-white hover:bg-primary/90 disabled:opacity-50 disabled:hover:bg-primary transition-colors"
+                >
+                  <Send size={18} />
+                </button>
+              </div>
            </div>
            <div className="text-center text-xs text-gray-500 mt-3 hidden md:block">
               ClawCore AI can make mistakes. Verify important information.
            </div>
         </div>
+        
+        {/* Status Modal */}
+        {showStatus && <SystemStatusModal onClose={() => setShowStatus(false)} />}
       </div>
-
-      {/* Status Modal */}
-      {showStatus && <SystemStatusModal onClose={() => setShowStatus(false)} />}
     </div>
   );
 }
 
 // --- Message Bubble Component ---
-function MessageBubble({ message }: { message: Message }) {
+function MessageBubble({ message, msgIdx, onPlay, isPlaying, isLoadingTts }: { 
+  message: Message, 
+  msgIdx: number,
+  onPlay: (text: string, idx: number) => void,
+  isPlaying: boolean,
+  isLoadingTts: boolean
+}) {
   const isUser = message.role === 'user';
   
   // Render markdown with Marked
@@ -515,19 +629,35 @@ function MessageBubble({ message }: { message: Message }) {
          {isUser ? <span className="text-xs font-medium">U</span> : <Bot size={16} />}
       </div>
       
-      <div className={`max-w-[85%] rounded-2xl px-5 py-4 shadow-sm ${
+      <div className={`max-w-[85%] rounded-2xl px-5 py-4 shadow-sm relative group/bubble ${
         isUser
            ? 'bg-white/10 text-white rounded-tr-sm border border-white/5'
            : 'glass rounded-tl-sm text-gray-100 border border-white/5'
       }`}>
-         {/* Safe HTML render for assistant since we parse markdown. User is raw text. */}
          {isUser ? (
            <div className="whitespace-pre-wrap">{message.content}</div>
          ) : (
-           <div 
-             className={`prose ${message.isStreaming ? 'typing-indicator-after' : ''}`}
-             dangerouslySetInnerHTML={{ __html: htmlContent }} 
-           />
+           <>
+             <div 
+               className={`prose ${message.isStreaming ? 'typing-indicator-after' : ''}`}
+               dangerouslySetInnerHTML={{ __html: htmlContent }} 
+             />
+             {!message.isStreaming && message.content && (
+               <button
+                 id={`play-tts-btn-${msgIdx}`}
+                 onClick={() => onPlay(message.content, msgIdx)}
+                 title={isPlaying ? 'Parar' : 'Ouvir resposta'}
+                 className={`mt-2 flex items-center gap-1 text-xs px-2 py-1 rounded-lg transition-all ${
+                   isPlaying 
+                     ? 'bg-primary/30 text-primary' 
+                     : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'
+                 }`}
+               >
+                 {isLoadingTts ? <Loader2 size={12} className="animate-spin" /> : isPlaying ? <VolumeX size={12} /> : <Volume2 size={12} />}
+                 <span>{isLoadingTts ? 'Gerando...' : isPlaying ? 'Parar' : 'Ouvir'}</span>
+               </button>
+             )}
+           </>
          )}
       </div>
     </div>

@@ -50,7 +50,7 @@ export async function runAgentLoop(
     } catch (err) {
       logger.error("ReAct Loop — LLM call failed", { error: String(err), iteration });
       return {
-        text: "⚠️ Ambos os provedores de IA estão indisponíveis no momento. Tente novamente em instantes.",
+        text: "⚠️ Todos os provedores de IA configurados estão indisponíveis no momento. Tente novamente em instantes.",
         isFile: false,
         isAudio: false,
       };

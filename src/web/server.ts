@@ -1,5 +1,9 @@
 // src/web/server.ts
 import express from "express";
+import multer from "multer";
+import OpenAI from "openai";
+import fs from "fs";
+import path from "path";
 import cors from "cors";
 import { config } from "../utils/config";
 import { logger } from "../utils/logger";
@@ -16,6 +20,14 @@ import {
   getConversationMessages,
 } from "../memory/repository";
 import { getAllSkills } from "../skills/loader";
+
+const TMP_DIR = path.resolve(process.cwd(), "tmp");
+
+// Multer for audio uploads — store in tmp directory
+const upload = multer({
+  dest: TMP_DIR,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB max
+});
 
 export function createWebServer(toolRegistry: ToolRegistry) {
   const app = express();
@@ -105,6 +117,97 @@ export function createWebServer(toolRegistry: ToolRegistry) {
     }
   });
 
+  // ── Voice → Text (STT via Groq Whisper) ─────────────────────────────────
+  app.post("/api/voice", authMiddleware, upload.single("audio"), async (req: any, res) => {
+    const file = req.file;
+    if (!file) {
+      res.status(400).json({ error: "Nenhum arquivo de áudio enviado." });
+      return;
+    }
+
+    try {
+      const apiKey = config.providers.groq.apiKey;
+      if (!apiKey) throw new Error("GROQ_API_KEY não configurada.");
+
+      const client = new OpenAI({
+        apiKey,
+        baseURL: "https://api.groq.com/openai/v1",
+      });
+
+      logger.info("Transcribing web voice input via Groq Whisper", { size: file.size });
+
+      const transcription = await client.audio.transcriptions.create({
+        file: fs.createReadStream(file.path),
+        model: "whisper-large-v3-turbo",
+        language: "pt",
+        response_format: "text",
+      });
+
+      const text = typeof transcription === "string"
+        ? transcription
+        : (transcription as { text: string }).text;
+
+      res.json({ text: text.trim() });
+    } catch (err) {
+      logger.error("Voice transcription failed", { error: String(err) });
+      res.status(500).json({ error: "Falha na transcrição de áudio." });
+    } finally {
+      if (file?.path && fs.existsSync(file.path)) {
+        try { fs.unlinkSync(file.path); } catch { /* ignore */ }
+      }
+    }
+  });
+
+  // ── Text → Speech (TTS via edge-tts-universal) ───────────────────────────
+  app.post("/api/tts", authMiddleware, async (req, res) => {
+    const { text } = req.body;
+    if (!text?.trim()) {
+      res.status(400).json({ error: "Texto vazio." });
+      return;
+    }
+
+    let tmpPath = "";
+    try {
+      // Clean markdown for TTS
+      const cleanText = text
+        .replace(/```[\s\S]*?```/g, "")
+        .replace(/`[^`]+`/g, "")
+        .replace(/\*{1,2}([^*]+)\*{1,2}/g, "$1")
+        .replace(/#{1,6}\s+/g, "")
+        .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+        .replace(/[>|~_]/g, "")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+
+      if (!cleanText) {
+        res.status(400).json({ error: "Texto vazio após limpeza." });
+        return;
+      }
+
+      const { EdgeTTS } = await import("edge-tts-universal");
+      const tts = new EdgeTTS(cleanText, config.audio.ttsVoice);
+      const result = await tts.synthesize();
+
+      tmpPath = path.join(TMP_DIR, `${Date.now()}_tts.mp3`);
+      const arrayBuffer = await result.audio.arrayBuffer();
+      fs.writeFileSync(tmpPath, Buffer.from(arrayBuffer));
+
+      logger.info("TTS generated for web", { chars: cleanText.length });
+
+      res.setHeader("Content-Type", "audio/mpeg");
+      res.setHeader("Content-Disposition", `inline; filename="tts.mp3"`);
+      const audioBuffer = fs.readFileSync(tmpPath);
+      res.send(audioBuffer);
+    } catch (err) {
+      logger.error("TTS failed", { error: String(err) });
+      res.status(500).json({ error: "Falha na geração de áudio." });
+    } finally {
+      if (tmpPath && fs.existsSync(tmpPath)) {
+        try { fs.unlinkSync(tmpPath); } catch { /* ignore */ }
+      }
+    }
+  });
+
   // ── Conversations ────────────────────────────────────────────────────────
   app.get("/api/conversations", authMiddleware, (_req, res) => {
     const conversations = getAllConversations("web-user");
@@ -145,7 +248,7 @@ export function createWebServer(toolRegistry: ToolRegistry) {
       conversations: stats.conversations,
       messages: stats.messages,
       provider: config.providers.primary,
-      fallback: config.providers.fallback,
+      fallbacks: config.providers.fallbacks,
     });
   });
 

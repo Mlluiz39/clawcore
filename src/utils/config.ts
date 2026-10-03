@@ -11,6 +11,24 @@ function optional(key: string, fallback: string): string {
   return val || fallback;
 }
 
+/** Parses a positive integer env var, falling back on missing/invalid values. */
+function optionalInt(key: string, fallback: number): number {
+  const raw = process.env[key]?.trim();
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`Invalid ${key}: "${raw}" must be a positive integer.`);
+  }
+  return parsed;
+}
+
+/** Boolean flag — accepts true/1/yes/on (case-insensitive). Default: false. */
+function flag(key: string, fallback = false): boolean {
+  const raw = process.env[key]?.trim().toLowerCase();
+  if (!raw) return fallback;
+  return ["true", "1", "yes", "on"].includes(raw);
+}
+
 /**
  * Validates an OpenAI API key format.
  * Accepts: sk-... (standard), sk-proj-... (project keys), sk-svcacct-... (service accounts)
@@ -48,7 +66,7 @@ const openaiBaseURL = validateBaseURL(optional("OPENAI_BASE_URL", "https://api.o
 
 export const config = {
   web: {
-    port: parseInt(optional("WEB_PORT", "3000")),
+    port: optionalInt("WEB_PORT", 8080),
     authPassword: required("WEB_AUTH_PASSWORD"),
     jwtSecret: required("JWT_SECRET"),
     corsOrigin: optional("CORS_ORIGIN", "*"),
@@ -59,8 +77,10 @@ export const config = {
     model: optional("OPENAI_MODEL", "gpt-4o-mini"),
   },
   agent: {
-    maxContextMessages: parseInt(optional("MAX_CONTEXT_MESSAGES", "20")),
-    maxIterations: parseInt(optional("MAX_AGENT_ITERATIONS", "5")),
+    maxContextMessages: optionalInt("MAX_CONTEXT_MESSAGES", 20),
+    maxIterations: optionalInt("MAX_AGENT_ITERATIONS", 5),
+    // run_command executa shell arbitrário — desligue em produção/exposição pública.
+    enableShellTool: flag("ENABLE_SHELL_TOOL", false),
   },
   audio: {
     ttsVoice: optional("TTS_VOICE", "pt-BR-ThalitaMultilingualNeural"),

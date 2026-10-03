@@ -52,7 +52,11 @@ async function main() {
   // Init Tool Registry
   const toolRegistry = new ToolRegistry();
   toolRegistry.register(new CreateFileTool());
-  toolRegistry.register(new RunCommandTool());
+  if (config.agent.enableShellTool) {
+    toolRegistry.register(new RunCommandTool());
+  } else {
+    logger.warn("Shell tool (run_command) disabled — set ENABLE_SHELL_TOOL=true to enable");
+  }
   toolRegistry.register(new WhatsAppTool());
 
   // Start web server

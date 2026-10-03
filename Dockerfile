@@ -13,7 +13,7 @@ RUN wget https://github.com/steipete/gogcli/releases/download/v0.12.0/gogcli_0.1
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm install
+RUN npm ci
 
 COPY tsconfig.json ./
 COPY src/ ./src/

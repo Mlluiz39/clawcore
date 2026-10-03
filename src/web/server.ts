@@ -35,6 +35,10 @@ export function createWebServer(toolRegistry: ToolRegistry) {
   const app = express();
   const controller = new AgentController(toolRegistry);
 
+  // Running behind nginx/Caddy: trust the first hop so `req.ip` (rate limiting,
+  // logs) reflects the real client instead of the reverse proxy's IP.
+  app.set("trust proxy", 1);
+
   // ── Security middleware ──────────────────────────────────────────────────
   app.use(helmet({
     contentSecurityPolicy: false, // Allow SSE and inline scripts for PWA

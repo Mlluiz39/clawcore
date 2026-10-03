@@ -1,0 +1,40 @@
+name: Deploy VPS
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-vps
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -eu
+            cd ~/clawcore
+
+            if [ ! -f .env ]; then
+              echo "ERRO: .env ausente no servidor (copie .env.example e preencha)."
+              exit 1
+            fi
+
+            git pull --ff-only
+
+            # Sobe a stack e aguarda os healthchecks (backend + frontend)
+            docker compose up -d --build --remove-orphans --wait --wait-timeout 300
+
+            # Verificação extra de ponta a ponta: API respondendo pelo container
+            docker compose exec -T backend wget -qO- http://127.0.0.1:8080/api/health
+
+            echo "Deploy OK"

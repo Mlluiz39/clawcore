@@ -1,0 +1,20 @@
+# Dependências e artefatos que não precisam (não devem) entrar na imagem
+node_modules
+dist
+data
+tmp
+outputs
+backups
+.git
+.github
+.env
+.env.example
+*.db
+*.db-shm
+*.db-wal
+frontend
+specs
+README.md
+scripts
+Dockerfile
+docker-compose.yml

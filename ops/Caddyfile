@@ -1,0 +1,23 @@
+# ClawCore — borda pública
+# TLS automático (Let's Encrypt / TLS interno para localhost) via Caddy.
+# SITE_DOMAIN vem do .env (interpolado pelo docker-compose).
+{$SITE_DOMAIN} {
+	encode zstd gzip
+
+	# Frontend (nginx) serve o React e faz proxy de /api para o backend
+	reverse_proxy frontend:80
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

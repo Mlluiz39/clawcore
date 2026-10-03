@@ -16,6 +16,14 @@ import { logger } from "./utils/logger";
 async function main() {
   logger.info("ClawCore v2.0 starting...");
 
+  // Log provider configuration (mask API key for security)
+  const maskedKey = config.openai.apiKey.slice(0, 7) + "..." + config.openai.apiKey.slice(-4);
+  logger.info("OpenAI provider configured", {
+    model: config.openai.model,
+    baseURL: config.openai.baseURL,
+    apiKey: maskedKey,
+  });
+
   // Ensure required directories exist
   const dirs = [
     path.resolve(process.cwd(), "data"),
@@ -56,14 +64,21 @@ async function main() {
   });
 
   // Graceful shutdown
-  process.once("SIGINT", () => {
-    logger.info("SIGINT received, shutting down");
-    server.close();
-  });
-  process.once("SIGTERM", () => {
-    logger.info("SIGTERM received, shutting down");
-    server.close();
-  });
+  const shutdown = (signal: string) => {
+    logger.info(`${signal} received, shutting down gracefully...`);
+    server.close(() => {
+      logger.info("HTTP server closed");
+      process.exit(0);
+    });
+    // Force exit after 10s if graceful shutdown hangs
+    setTimeout(() => {
+      logger.error("Forced shutdown after timeout");
+      process.exit(1);
+    }, 10_000).unref();
+  };
+
+  process.once("SIGINT", () => shutdown("SIGINT"));
+  process.once("SIGTERM", () => shutdown("SIGTERM"));
 }
 
 main().catch((err) => {

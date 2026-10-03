@@ -4,13 +4,6 @@ import { ChatMessage } from "../providers/types";
 import { getSkillSummaries } from "./loader";
 import { logger } from "../utils/logger";
 
-let _factory: ProviderFactory | null = null;
-
-function getFactory(): ProviderFactory {
-  if (!_factory) _factory = new ProviderFactory();
-  return _factory;
-}
-
 /**
  * SkillRouter — "Step Zero" in the pipeline.
  * Uses a cheap LLM call with the skill summaries to decide
@@ -44,7 +37,7 @@ RULES:
   ];
 
   try {
-    const { response } = await getFactory().chat(messages);
+    const { response } = await ProviderFactory.getInstance().chat(messages);
 
     // Parse the JSON response
     const cleaned = response.trim().replace(/```json\n?/g, "").replace(/```/g, "").trim();

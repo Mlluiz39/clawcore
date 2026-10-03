@@ -1,98 +1,94 @@
 // src/providers/factory.ts
-import { config } from "../utils/config";
 import { logger } from "../utils/logger";
 import { LLMProvider, ChatMessage, ToolCall, ToolDefinitionParam } from "./types";
-import { CerebrasProvider } from "./cerebras";
-import { GroqProvider } from "./groq";
-import { GeminiProvider } from "./gemini";
-import { DeepSeekProvider } from "./deepseek";
-import { OpenRouterProvider } from "./openrouter";
+import { OpenAIProvider } from "./openai";
 
-function buildProvider(name: string): LLMProvider {
-  switch (name) {
-    case "cerebras":
-      return new CerebrasProvider(config.providers.cerebras.apiKey);
-    case "groq":
-      return new GroqProvider(config.providers.groq.apiKey);
-    case "gemini":
-      return new GeminiProvider(config.providers.gemini.apiKey);
-    case "deepseek":
-      return new DeepSeekProvider(config.providers.deepseek.apiKey);
-    case "openrouter":
-      return new OpenRouterProvider(config.providers.openrouter.apiKey);
-    default:
-      throw new Error(`Unknown provider: ${name}`);
-  }
+/**
+ * ProviderFactory — Singleton wrapper around the OpenAI provider.
+ * Handles retry logic with exponential backoff for transient errors (429, 500, 502, 503).
+ */
+
+const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503]);
+const MAX_RETRIES = 3;
+const BASE_DELAY_MS = 1000;
+
+function isRetryable(err: any): boolean {
+  const status = err?.status ?? err?.response?.status;
+  return typeof status === "number" && RETRYABLE_STATUS_CODES.has(status);
 }
 
+async function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+let _instance: ProviderFactory | null = null;
+
 export class ProviderFactory {
-  private providers: LLMProvider[] = [];
+  private provider: LLMProvider;
 
   constructor() {
-    try {
-      this.providers.push(buildProvider(config.providers.primary));
-      for (const fallbackName of config.providers.fallbacks) {
-        if (fallbackName && fallbackName !== config.providers.primary) {
-          this.providers.push(buildProvider(fallbackName));
-        }
-      }
-      logger.info("ProviderFactory ready", {
-        chain: this.providers.map(p => p.name),
-      });
-    } catch (err) {
-      logger.error("Failed to initialize ProviderFactory", { error: String(err) });
-      throw err;
-    }
+    this.provider = new OpenAIProvider();
+    logger.info("ProviderFactory ready", { provider: this.provider.name });
+  }
+
+  /**
+   * Returns the singleton instance of ProviderFactory.
+   */
+  static getInstance(): ProviderFactory {
+    if (!_instance) _instance = new ProviderFactory();
+    return _instance;
   }
 
   async chat(messages: ChatMessage[]): Promise<{ response: string; provider: string }> {
-    let lastError: any = null;
-
-    for (const provider of this.providers) {
-      try {
-        const response = await provider.chat(messages);
-        return { response, provider: provider.name };
-      } catch (err: any) {
-        lastError = err;
-        logger.warn(`Provider ${provider.name} failed, trying next in chain`, {
-          error: String(err),
-          status: err?.status ?? err?.response?.status ?? "unknown",
-          code: err?.code ?? "unknown",
-        });
-      }
-    }
-
-    logger.error("All providers in chain failed", {
-      error: String(lastError),
-      status: (lastError as any)?.status ?? "unknown",
+    return this.withRetry(async () => {
+      const response = await this.provider.chat(messages);
+      return { response, provider: this.provider.name };
     });
-    throw new Error("Todos os provedores de IA falharam. Por favor, tente novamente mais tarde.");
   }
 
   async chatWithTools(
     messages: ChatMessage[],
     tools: ToolDefinitionParam[]
   ): Promise<{ content: string | null; toolCalls: ToolCall[]; provider: string }> {
+    return this.withRetry(async () => {
+      const result = await this.provider.chatWithTools(messages, tools);
+      return { ...result, provider: this.provider.name };
+    });
+  }
+
+  /**
+   * Retry wrapper with exponential backoff for transient API errors.
+   */
+  private async withRetry<T>(fn: () => Promise<T>): Promise<T> {
     let lastError: any = null;
 
-    for (const provider of this.providers) {
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       try {
-        const result = await provider.chatWithTools(messages, tools);
-        return { ...result, provider: provider.name };
+        return await fn();
       } catch (err: any) {
         lastError = err;
-        logger.warn(`Provider ${provider.name} (tools) failed, trying next in chain`, {
+
+        if (!isRetryable(err) || attempt === MAX_RETRIES) {
+          break;
+        }
+
+        const delayMs = BASE_DELAY_MS * Math.pow(2, attempt - 1);
+        logger.warn(`OpenAI request failed (attempt ${attempt}/${MAX_RETRIES}), retrying in ${delayMs}ms`, {
           error: String(err),
           status: err?.status ?? err?.response?.status ?? "unknown",
           code: err?.code ?? "unknown",
         });
+
+        await sleep(delayMs);
       }
     }
 
-    logger.error("All providers in chain failed (tools)", {
+    logger.error("OpenAI request failed after all retries", {
       error: String(lastError),
       status: (lastError as any)?.status ?? "unknown",
     });
-    throw new Error("Todos os provedores de IA falharam ao processar ferramentas.");
+    throw new Error(
+      "O provedor de IA está indisponível no momento. Verifique sua OPENAI_API_KEY e OPENAI_BASE_URL e tente novamente."
+    );
   }
 }

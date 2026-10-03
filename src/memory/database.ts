@@ -18,7 +18,7 @@ export function getDb(): Database.Database {
     CREATE TABLE IF NOT EXISTS conversations (
       id         TEXT PRIMARY KEY,
       user_id    TEXT NOT NULL,
-      provider   TEXT NOT NULL DEFAULT 'cerebras',
+      provider   TEXT NOT NULL DEFAULT 'openai',
       created_at INTEGER NOT NULL DEFAULT (unixepoch()),
       title      TEXT NOT NULL DEFAULT 'Nova Conversa'
     );

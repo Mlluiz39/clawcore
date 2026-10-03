@@ -36,7 +36,7 @@ export function createNewConversation(userId: string): Conversation {
   const conv: Conversation = {
     id: randomUUID(),
     user_id: userId,
-    provider: config.providers.primary,
+    provider: "openai",
     created_at: Math.floor(Date.now() / 1000),
     title: "Nova Conversa",
   };

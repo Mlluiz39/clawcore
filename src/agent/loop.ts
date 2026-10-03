@@ -5,13 +5,6 @@ import { ToolRegistry } from "../tools/registry";
 import { logger } from "../utils/logger";
 import { config } from "../utils/config";
 
-let _factory: ProviderFactory | null = null;
-
-function getFactory(): ProviderFactory {
-  if (!_factory) _factory = new ProviderFactory();
-  return _factory;
-}
-
 export interface AgentResult {
   text: string;
   isFile: boolean;
@@ -29,13 +22,14 @@ export async function runAgentLoop(
   messages: ChatMessage[],
   toolRegistry: ToolRegistry
 ): Promise<AgentResult> {
+  const factory = ProviderFactory.getInstance();
   const maxIterations = config.agent.maxIterations || 5;
   const tools = toolRegistry.getDefinitions();
   const hasTools = tools.length > 0;
 
   // If no tools registered, do a simple chat
   if (!hasTools) {
-    const { response } = await getFactory().chat(messages);
+    const { response } = await factory.chat(messages);
     return detectOutputType(response);
   }
 
@@ -46,11 +40,11 @@ export async function runAgentLoop(
 
     let result;
     try {
-      result = await getFactory().chatWithTools(currentMessages, tools);
+      result = await factory.chatWithTools(currentMessages, tools);
     } catch (err) {
       logger.error("ReAct Loop — LLM call failed", { error: String(err), iteration });
       return {
-        text: "⚠️ Todos os provedores de IA configurados estão indisponíveis no momento. Tente novamente em instantes.",
+        text: "⚠️ O provedor de IA está indisponível no momento. Tente novamente em instantes.",
         isFile: false,
         isAudio: false,
       };

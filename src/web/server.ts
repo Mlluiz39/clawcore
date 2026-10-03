@@ -5,6 +5,8 @@ import OpenAI from "openai";
 import fs from "fs";
 import path from "path";
 import cors from "cors";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
 import { config } from "../utils/config";
 import { logger } from "../utils/logger";
 import { AgentController } from "../agent/controller";
@@ -33,13 +35,36 @@ export function createWebServer(toolRegistry: ToolRegistry) {
   const app = express();
   const controller = new AgentController(toolRegistry);
 
-  // Middleware
-  app.use(cors());
-  app.use(express.json());
+  // ── Security middleware ──────────────────────────────────────────────────
+  app.use(helmet({
+    contentSecurityPolicy: false, // Allow SSE and inline scripts for PWA
+  }));
+
+  app.use(cors({
+    origin: config.web.corsOrigin,
+    methods: ["GET", "POST", "DELETE"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  }));
+
+  // Rate limiting — 100 requests per 15 minutes per IP
+  const limiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 100,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "Muitas requisições. Tente novamente em alguns minutos." },
+  });
+  app.use("/api/", limiter);
+
+  app.use(express.json({ limit: "1mb" }));
 
   // ── Auth ──────────────────────────────────────────────────────────────────
   app.post("/api/auth/login", (req, res) => {
     const { password } = req.body;
+    if (!password || typeof password !== "string") {
+      res.status(400).json({ error: "Senha é obrigatória" });
+      return;
+    }
     if (password !== config.web.authPassword) {
       res.status(401).json({ error: "Senha incorreta" });
       return;
@@ -117,7 +142,7 @@ export function createWebServer(toolRegistry: ToolRegistry) {
     }
   });
 
-  // ── Voice → Text (STT via Groq Whisper) ─────────────────────────────────
+  // ── Voice → Text (STT via OpenAI Whisper) ────────────────────────────────
   app.post("/api/voice", authMiddleware, upload.single("audio"), async (req: any, res) => {
     const file = req.file;
     if (!file) {
@@ -126,19 +151,16 @@ export function createWebServer(toolRegistry: ToolRegistry) {
     }
 
     try {
-      const apiKey = config.providers.groq.apiKey;
-      if (!apiKey) throw new Error("GROQ_API_KEY não configurada.");
-
       const client = new OpenAI({
-        apiKey,
-        baseURL: "https://api.groq.com/openai/v1",
+        apiKey: config.openai.apiKey,
+        baseURL: config.openai.baseURL,
       });
 
-      logger.info("Transcribing web voice input via Groq Whisper", { size: file.size });
+      logger.info("Transcribing voice input via OpenAI Whisper", { size: file.size });
 
       const transcription = await client.audio.transcriptions.create({
         file: fs.createReadStream(file.path),
-        model: "whisper-large-v3-turbo",
+        model: "whisper-1",
         language: "pt",
         response_format: "text",
       });
@@ -247,9 +269,15 @@ export function createWebServer(toolRegistry: ToolRegistry) {
       toolNames: tools,
       conversations: stats.conversations,
       messages: stats.messages,
-      provider: config.providers.primary,
-      fallbacks: config.providers.fallbacks,
+      provider: "openai",
+      model: config.openai.model,
+      baseURL: config.openai.baseURL,
     });
+  });
+
+  // ── Health check (no auth) ───────────────────────────────────────────────
+  app.get("/api/health", (_req, res) => {
+    res.json({ status: "ok", uptime: Math.floor(process.uptime()) });
   });
 
   // ── Fallback 404 para rotas não API ──────────────────────────────────────

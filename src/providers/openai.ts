@@ -1,30 +1,39 @@
-// src/providers/gemini.ts
+// src/providers/openai.ts
 import OpenAI from "openai";
 import { ChatMessage, LLMProvider, ToolCall, ToolDefinitionParam } from "./types";
 import { logger } from "../utils/logger";
+import { config } from "../utils/config";
 
-export class GeminiProvider implements LLMProvider {
-  name = "gemini";
+export class OpenAIProvider implements LLMProvider {
+  name = "openai";
   private client: OpenAI;
+  private model: string;
 
-  constructor(apiKey: string) {
+  constructor() {
     this.client = new OpenAI({
-      apiKey,
-      baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
+      apiKey: config.openai.apiKey,
+      baseURL: config.openai.baseURL,
+      timeout: 60_000,
+      maxRetries: 3,
     });
+    this.model = config.openai.model;
   }
 
   async chat(messages: ChatMessage[]): Promise<string> {
-    logger.debug("Calling Gemini", { model: "gemini-2.0-flash", msgs: messages.length });
+    logger.debug("Calling OpenAI", {
+      model: this.model,
+      baseURL: config.openai.baseURL,
+      msgs: messages.length,
+    });
 
     const res = await this.client.chat.completions.create({
-      model: "gemini-2.0-flash",
+      model: this.model,
       messages: messages as OpenAI.ChatCompletionMessageParam[],
       max_tokens: 8192,
     });
 
     const content = res.choices[0]?.message?.content;
-    if (!content) throw new Error("Gemini returned empty response");
+    if (!content) throw new Error("OpenAI returned empty response");
     return content;
   }
 
@@ -32,14 +41,15 @@ export class GeminiProvider implements LLMProvider {
     messages: ChatMessage[],
     tools: ToolDefinitionParam[]
   ): Promise<{ content: string | null; toolCalls: ToolCall[] }> {
-    logger.debug("Calling Gemini with tools", {
-      model: "gemini-2.0-flash",
+    logger.debug("Calling OpenAI with tools", {
+      model: this.model,
+      baseURL: config.openai.baseURL,
       msgs: messages.length,
       tools: tools.length,
     });
 
     const res = await this.client.chat.completions.create({
-      model: "gemini-2.0-flash",
+      model: this.model,
       messages: messages as OpenAI.ChatCompletionMessageParam[],
       tools: tools as OpenAI.ChatCompletionTool[],
       max_tokens: 8192,

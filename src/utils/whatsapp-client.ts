@@ -34,7 +34,8 @@ export class WhatsAppClient {
     this.isInitializing = true;
 
     try {
-      const authPath = path.join(process.cwd(), 'data/whatsapp-session');
+      const dataDir = process.env.DATA_DIR || path.resolve(process.cwd(), "data");
+      const authPath = path.join(dataDir, "whatsapp-session");
       if (!fs.existsSync(authPath)) {
         fs.mkdirSync(authPath, { recursive: true });
       }

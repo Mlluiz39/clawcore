@@ -10,6 +10,8 @@ export interface AgentResult {
   isFile: boolean;
   isAudio: boolean;
   fileName?: string;
+  /** Quantidade de ações de ferramenta executadas — exibida como "passos" no thread. */
+  steps: number;
 }
 
 /**
@@ -30,10 +32,11 @@ export async function runAgentLoop(
   // If no tools registered, do a simple chat
   if (!hasTools) {
     const { response } = await factory.chat(messages);
-    return detectOutputType(response);
+    return { ...detectOutputType(response), steps: 0 };
   }
 
   let currentMessages = [...messages];
+  let steps = 0;
 
   for (let iteration = 1; iteration <= maxIterations; iteration++) {
     logger.info(`ReAct Loop — Iteration ${iteration}/${maxIterations}`);
@@ -41,12 +44,14 @@ export async function runAgentLoop(
     let result;
     try {
       result = await factory.chatWithTools(currentMessages, tools);
-    } catch (err) {
+    } catch (err: any) {
       logger.error("ReAct Loop — LLM call failed", { error: String(err), iteration });
+      const errDetail = err?.message || String(err);
       return {
-        text: "⚠️ O provedor de IA está indisponível no momento. Tente novamente em instantes.",
+        text: `⚠️ Erro no provedor de IA (${errDetail}). Verifique o modelo nas Configurações do painel.`,
         isFile: false,
         isAudio: false,
+        steps,
       };
     }
 
@@ -58,7 +63,7 @@ export async function runAgentLoop(
         provider: result.provider,
         responseLength: finalText.length,
       });
-      return detectOutputType(finalText);
+      return { ...detectOutputType(finalText), steps };
     }
 
     // Process tool calls
@@ -81,6 +86,7 @@ export async function runAgentLoop(
 
       logger.info(`ReAct Loop — Action: ${name}`, { args: argsJson.slice(0, 200) });
 
+      steps += 1;
       const toolResult = await toolRegistry.execute(name, argsJson);
 
       logger.info(`ReAct Loop — Observation`, {
@@ -99,18 +105,82 @@ export async function runAgentLoop(
   }
 
   // Hard limit reached
-  logger.warn("ReAct Loop — Max iterations reached", { maxIterations });
+  logger.warn("ReAct Loop — Max iterations reached", { maxIterations, steps });
+
+  // O trabalho já coletado não pode ser descartado: pede uma resposta final sem
+  // ferramentas, usando apenas as observações acumuladas.
+  const synthesis = await synthesizeFromObservations(currentMessages, maxIterations);
+  if (synthesis) {
+    logger.info("ReAct Loop — Synthesized final answer after iteration limit", {
+      steps,
+      responseLength: synthesis.length,
+    });
+    return { ...detectOutputType(synthesis), steps };
+  }
+
   return {
-    text: `⚠️ Desculpe, atingi o limite máximo de ${maxIterations} iterações de processamento. Tente reformular sua solicitação de forma mais específica.`,
+    text:
+      `⚠️ Atingi o limite de ${maxIterations} rodadas de ferramentas e não consegui montar o resumo final. ` +
+      "O que já foi executado pode estar registrado na Inbox de aprovação. Peça para eu continuar de onde parei, " +
+      "ou aumente MAX_AGENT_ITERATIONS.",
     isFile: false,
     isAudio: false,
+    steps,
   };
+}
+
+/**
+ * Pede ao modelo uma resposta final a partir das observações já coletadas.
+ *
+ * Envia um transcript compacto das observações de ferramenta em vez das mensagens
+ * originais: mensagens de assistente com `tool_calls` não são aceitas em uma
+ * chamada sem ferramentas.
+ */
+async function synthesizeFromObservations(
+  currentMessages: ChatMessage[],
+  maxIterations: number
+): Promise<string | null> {
+  const observations = currentMessages
+    .filter((m) => m.role === "tool" && typeof m.content === "string" && m.content.trim())
+    .map((m, index) => `[observação ${index + 1}]\n${truncate(m.content as string, 2_000)}`)
+    .join("\n\n");
+
+  if (!observations) return null;
+
+  const systemMessage = currentMessages.find((m) => m.role === "system");
+  const lastUserMessage = [...currentMessages].reverse().find((m) => m.role === "user");
+
+  const instruction = [
+    `Você já usou ${maxIterations} rodadas de ferramentas e não pode chamar mais nenhuma.`,
+    "Responda AGORA ao pedido original com o que foi coletado nas observações abaixo.",
+    "Não invente dados ausentes: diga explicitamente o que não foi verificado.",
+    "Se algum item já foi registrado como entregável, não tente registrar de novo — apenas informe.",
+    "",
+    `Pedido original do usuário:\n${truncate(String(lastUserMessage?.content ?? ""), 2_000)}`,
+    "",
+    `Observações coletadas:\n${observations}`,
+  ].join("\n");
+
+  try {
+    const { response } = await ProviderFactory.getInstance().chat([
+      ...(systemMessage ? [systemMessage] : []),
+      { role: "user", content: instruction },
+    ]);
+    return response?.trim() ? response : null;
+  } catch (err) {
+    logger.error("ReAct Loop — Final synthesis failed", { error: String(err) });
+    return null;
+  }
+}
+
+function truncate(value: string, limit: number): string {
+  return value.length <= limit ? value : `${value.slice(0, limit)}… [truncado]`;
 }
 
 /**
  * Detect if the response should be sent as a file or audio
  */
-function detectOutputType(text: string): AgentResult {
+function detectOutputType(text: string): Omit<AgentResult, "steps"> {
   // Check for file markers — the LLM may wrap content in ```markdown blocks
   // or use explicit markers like [ARQUIVO: filename.md]
   const fileMatch = text.match(/\[ARQUIVO:\s*(.+?)\]/i);

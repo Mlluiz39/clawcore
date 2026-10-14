@@ -2,27 +2,48 @@
 import OpenAI from "openai";
 import { ChatMessage, LLMProvider, ToolCall, ToolDefinitionParam } from "./types";
 import { logger } from "../utils/logger";
-import { config } from "../utils/config";
+import { getLLMSettings, maskKey } from "../utils/settings";
 
 export class OpenAIProvider implements LLMProvider {
   name = "openai";
-  private client: OpenAI;
-  private model: string;
+
+  private client!: OpenAI;
+  private model!: string;
+  private clientKey = "";
 
   constructor() {
-    this.client = new OpenAI({
-      apiKey: config.openai.apiKey,
-      baseURL: config.openai.baseURL,
-      timeout: 60_000,
-      maxRetries: 3,
-    });
-    this.model = config.openai.model;
+    this.refresh();
+  }
+
+  /**
+   * Rebuilds the client when dashboard settings change (API key / base URL).
+   * Cheap: only re-creates the SDK client when the credentials actually differ.
+   */
+  private refresh(): this {
+    const settings = getLLMSettings();
+    const key = `${settings.apiKey}|${settings.baseURL}`;
+    if (key !== this.clientKey) {
+      this.client = new OpenAI({
+        apiKey: settings.apiKey,
+        baseURL: settings.baseURL,
+        timeout: 60_000,
+        maxRetries: 3,
+      });
+      this.clientKey = key;
+      logger.info("OpenAI client (re)configured", {
+        baseURL: settings.baseURL,
+        apiKey: maskKey(settings.apiKey),
+      });
+    }
+    this.model = settings.model;
+    return this;
   }
 
   async chat(messages: ChatMessage[]): Promise<string> {
+    this.refresh();
     logger.debug("Calling OpenAI", {
       model: this.model,
-      baseURL: config.openai.baseURL,
+      baseURL: getLLMSettings().baseURL,
       msgs: messages.length,
     });
 
@@ -41,9 +62,10 @@ export class OpenAIProvider implements LLMProvider {
     messages: ChatMessage[],
     tools: ToolDefinitionParam[]
   ): Promise<{ content: string | null; toolCalls: ToolCall[] }> {
+    this.refresh();
     logger.debug("Calling OpenAI with tools", {
       model: this.model,
-      baseURL: config.openai.baseURL,
+      baseURL: getLLMSettings().baseURL,
       msgs: messages.length,
       tools: tools.length,
     });

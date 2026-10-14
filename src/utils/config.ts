@@ -33,13 +33,10 @@ function flag(key: string, fallback = false): boolean {
  * Validates an OpenAI API key format.
  * Accepts: sk-... (standard), sk-proj-... (project keys), sk-svcacct-... (service accounts)
  */
-function validateOpenAIKey(key: string): string {
+export function validateOpenAIKey(key: string): string {
   const trimmed = key.trim();
-  if (!/^sk-[a-zA-Z0-9_-]{20,}$/.test(trimmed)) {
-    throw new Error(
-      `Invalid OPENAI_API_KEY format. Must start with "sk-" followed by 20+ alphanumeric characters. ` +
-      `Got: "${trimmed.slice(0, 8)}..." (${trimmed.length} chars)`
-    );
+  if (!trimmed) {
+    throw new Error("OPENAI_API_KEY must not be empty.");
   }
   return trimmed;
 }
@@ -47,7 +44,7 @@ function validateOpenAIKey(key: string): string {
 /**
  * Validates a URL format for the OpenAI base URL.
  */
-function validateBaseURL(url: string): string {
+export function validateBaseURL(url: string): string {
   try {
     const parsed = new URL(url);
     if (!["http:", "https:"].includes(parsed.protocol)) {
@@ -78,9 +75,16 @@ export const config = {
   },
   agent: {
     maxContextMessages: optionalInt("MAX_CONTEXT_MESSAGES", 20),
-    maxIterations: optionalInt("MAX_AGENT_ITERATIONS", 5),
+    // 5 rodadas não fecham trabalhos multi-etapa (buscar, filtrar, auditar,
+    // enriquecer e entregar). O teto continua configurável por env.
+    maxIterations: optionalInt("MAX_AGENT_ITERATIONS", 12),
     // run_command executa shell arbitrário — desligue em produção/exposição pública.
     enableShellTool: flag("ENABLE_SHELL_TOOL", false),
+  },
+  whatsapp: {
+    // Desligado, não inicializa o cliente nem registra a ferramenta: evita loop de
+    // reconexão, QR no log e uma capacidade anunciada que não funcionaria.
+    enabled: flag("WHATSAPP_ENABLED", true),
   },
   audio: {
     ttsVoice: optional("TTS_VOICE", "pt-BR-ThalitaMultilingualNeural"),

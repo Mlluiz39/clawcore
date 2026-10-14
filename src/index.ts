@@ -3,33 +3,46 @@ import "dotenv/config";
 import fs from "fs";
 import path from "path";
 import { getDb } from "./memory/database";
+import { pruneUnknownBuiltinTools } from "./memory/repository";
 import { loadAllSkills, watchSkills } from "./skills/loader";
 import { ToolRegistry } from "./tools/registry";
 import { CreateFileTool } from "./tools/create-file";
 import { RunCommandTool } from "./tools/run-command";
 import { WhatsAppTool } from "./tools/whatsapp";
+import { CreateDeliverableTool } from "./tools/create-deliverable";
+import { RequestApprovalTool } from "./tools/request-approval";
+import { CompanyBrainTool } from "./tools/company-brain";
+import { WebSearchTool } from "./tools/web-search";
+import { GlasserTool } from "./tools/glasser";
+import { B2BProspectorTool } from "./tools/prospector";
 import { WhatsAppClient } from "./utils/whatsapp-client";
+import { AgentController } from "./agent/controller";
+import { startScheduler, stopScheduler } from "./scheduler/runner";
 import { createWebServer } from "./web/server";
 import { config } from "./utils/config";
+import { getLLMSettings, maskKey, hasFileOverride } from "./utils/settings";
 import { logger } from "./utils/logger";
 
 async function main() {
   logger.info("ClawCore v2.0 starting...");
 
   // Log provider configuration (mask API key for security)
-  const maskedKey = config.openai.apiKey.slice(0, 7) + "..." + config.openai.apiKey.slice(-4);
+  const llm = getLLMSettings();
   logger.info("OpenAI provider configured", {
-    model: config.openai.model,
-    baseURL: config.openai.baseURL,
-    apiKey: maskedKey,
+    model: llm.model,
+    baseURL: llm.baseURL,
+    apiKey: maskKey(llm.apiKey),
+    source: hasFileOverride() ? "dashboard (data/settings.json)" : "env",
   });
 
   // Ensure required directories exist
+  const dataDir = process.env.DATA_DIR || path.resolve(process.cwd(), "data");
   const dirs = [
-    path.resolve(process.cwd(), "data"),
+    dataDir,
     path.resolve(process.cwd(), "tmp"),
     path.resolve(process.cwd(), "public"),
-    path.resolve(process.cwd(), "data/whatsapp-session"),
+    // A sessão do WhatsApp só é criada quando o cliente é inicializado (init() já faz isso).
+
     path.resolve(process.cwd(), ".agents", "skills"),
   ];
   for (const dir of dirs) {
@@ -47,7 +60,11 @@ async function main() {
   watchSkills();
 
   // Init WhatsApp (will auto-reconnect if session exists)
-  WhatsAppClient.getInstance().init();
+  if (config.whatsapp.enabled) {
+    WhatsAppClient.getInstance().init();
+  } else {
+    logger.warn("WhatsApp disabled — set WHATSAPP_ENABLED=true and restart to pair");
+  }
 
   // Init Tool Registry
   const toolRegistry = new ToolRegistry();
@@ -57,10 +74,37 @@ async function main() {
   } else {
     logger.warn("Shell tool (run_command) disabled — set ENABLE_SHELL_TOOL=true to enable");
   }
-  toolRegistry.register(new WhatsAppTool());
+  if (config.whatsapp.enabled) {
+    toolRegistry.register(new WhatsAppTool());
+  }
+  toolRegistry.register(new CreateDeliverableTool());
+  toolRegistry.register(new RequestApprovalTool());
+  toolRegistry.register(new CompanyBrainTool());
+  toolRegistry.register(new WebSearchTool());
+  toolRegistry.register(new GlasserTool());
+  toolRegistry.register(new B2BProspectorTool());
+
+  // Alinha agentes nativos com as ferramentas que existem de fato: a lista é
+  // exibida na interface, então ferramenta inexistente vira promessa falsa.
+  // Ferramentas condicionais (desligadas por configuração) continuam válidas na
+  // lista — o agente volta a usá-las quando a flag for ligada.
+  const knownToolNames = [...toolRegistry.getToolNames(), new RunCommandTool().name];
+  const { updated, unknown } = pruneUnknownBuiltinTools(knownToolNames);
+  for (const agent of updated) {
+    logger.warn("Removed unknown tools from builtin agent", { agentId: agent.id, removed: agent.removed });
+  }
+  for (const item of unknown) {
+    logger.warn("Agent declares an unregistered tool", { agentId: item.id, tool: item.tool });
+  }
+
+  // Init Agent Controller
+  const controller = new AgentController(toolRegistry);
+
+  // Start Background Automations Scheduler
+  startScheduler(controller);
 
   // Start web server
-  const app = createWebServer(toolRegistry);
+  const app = createWebServer(toolRegistry, controller);
   const port = config.web.port;
 
   const server = app.listen(port, () => {
@@ -70,6 +114,7 @@ async function main() {
   // Graceful shutdown
   const shutdown = (signal: string) => {
     logger.info(`${signal} received, shutting down gracefully...`);
+    stopScheduler();
     server.close(() => {
       logger.info("HTTP server closed");
       process.exit(0);

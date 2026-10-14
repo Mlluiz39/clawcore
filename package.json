@@ -7,12 +7,13 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
+    "test:surething": "tsx --env-file=.env tests/surething-motor-test.ts",
     "backup": "./scripts/backup-db.sh"
   },
   "dependencies": {
     "@hapi/boom": "^10.0.1",
     "@whiskeysockets/baileys": "^6.7.24",
-    "better-sqlite3": "^11.7.0",
+    "better-sqlite3": "^13.0.3",
     "cors": "^2.8.6",
     "dotenv": "^16.4.0",
     "edge-tts-universal": "^1.3.0",

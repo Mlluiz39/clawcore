@@ -19,8 +19,8 @@ export function LoginModal({ onSuccess, onCancel }: LoginModalProps) {
     setLoading(true);
 
     try {
-      const { token } = await login(password);
-      localStorage.setItem("token", token);
+      // O servidor responde com o cookie de sessão; nada é guardado no cliente.
+      await login(password);
       onSuccess();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Senha incorreta");

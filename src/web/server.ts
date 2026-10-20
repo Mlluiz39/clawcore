@@ -1,5 +1,5 @@
 // src/web/server.ts
-import express from "express";
+import express, { Request } from "express";
 import multer from "multer";
 import OpenAI from "openai";
 import fs from "fs";
@@ -12,18 +12,16 @@ import { getLLMSettings, updateLLMSettings, maskKey, hasFileOverride } from "../
 import { logger } from "../utils/logger";
 import { AgentController } from "../agent/controller";
 import { ToolRegistry } from "../tools/registry";
-import { authMiddleware, generateToken } from "./auth";
+import cookieParser from "cookie-parser";
+import { authMiddleware, generateToken, verifyPassword, sessionCookieOptions, AUTH_COOKIE } from "./auth";
 import {
-  getOrCreateConversation,
   getAllConversations,
   createNewConversation,
   deleteConversation,
-  getRecentMessages,
   getStats,
   getConversationMessages,
   getConversationById,
   getAllAgents,
-  getAgentById,
   createCustomAgent,
   deleteCustomAgent,
   getCompanyProfile,
@@ -61,46 +59,110 @@ export function createWebServer(toolRegistry: ToolRegistry, externalController?:
   const app = express();
   const controller = externalController || new AgentController(toolRegistry);
 
-  // Running behind nginx/Caddy: trust the first hop so `req.ip` (rate limiting,
-  // logs) reflects the real client instead of the reverse proxy's IP.
-  app.set("trust proxy", 1);
+  // Cadeia em produção: cliente → Caddy → nginx → backend (dois proxies).
+  // Com `trust proxy: 1` o Express para no penúltimo salto e enxerga o nginx,
+  // não o cliente — o que faria todos os usuários dividirem o mesmo balde de
+  // rate limit (e o log registrar sempre o IP interno).
+  //
+  // Valor padrão 2 = os dois hops do compose. Ajustável por env para quem
+  // rodar atrás de outra topologia; `TRUST_PROXY=0` desliga.
+  app.set("trust proxy", config.web.trustProxy);
 
   // ── Security middleware ──────────────────────────────────────────────────
+  // CSP restritiva. O ponto crítico é `script-src 'self'` — sem 'unsafe-inline'
+  // nem 'unsafe-eval' — porque o HTML renderizado no painel vem do LLM e passa
+  // por DOMPurify: a CSP é a segunda barreira se um payload escapar.
+  //
+  // `style-src` precisa de 'unsafe-inline': o React 19 injeta elementos <style>
+  // em runtime para os recursos de stylesheet (não há atributos `style={}` no
+  // código, mas o próprio runtime cria a tag). 'unsafe-inline' em style não
+  // permite execução de script.
+  //
+  // `connect-src 'self'` cobre o SSE do chat, que é same-origin.
   app.use(helmet({
-    contentSecurityPolicy: false, // Allow SSE and inline scripts for PWA
+    contentSecurityPolicy: {
+      useDefaults: false,
+      directives: {
+        "default-src": ["'self'"],
+        "script-src": ["'self'"],
+        "style-src": ["'self'", "'unsafe-inline'"],
+        "img-src": ["'self'", "data:", "blob:"],
+        "font-src": ["'self'", "data:"],
+        "connect-src": ["'self'"],
+        "worker-src": ["'self'", "blob:"], // service worker do PWA
+        "manifest-src": ["'self'"],
+        "object-src": ["'none'"],
+        "frame-ancestors": ["'none'"],
+        "base-uri": ["'self'"],
+        "form-action": ["'self'"],
+      },
+    },
   }));
 
+  // `credentials: true` é obrigatório para o cookie de sessão atravessar
+  // origens distintas (dev: frontend em :5173, API em :8080). É seguro porque
+  // `origin` é um valor exato — nunca "*", que o browser rejeita com credenciais.
   app.use(cors({
     origin: config.web.corsOrigin,
-    methods: ["GET", "POST", "DELETE"],
+    methods: ["GET", "POST", "PUT", "DELETE"],
     allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: true,
   }));
 
-  // Rate limiting — 100 requests per 15 minutes per IP
+  // Rate limiting — 100 requests per 15 minutes per IP.
+  // `skip` deixa o login usar seu próprio balde (abaixo): senão um atacante
+  // esgota o orçamento do usuário legítimo com tentativas de senha.
   const limiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     max: 100,
     standardHeaders: true,
     legacyHeaders: false,
+    skip: (req) => req.path === "/auth/login",
     message: { error: "Muitas requisições. Tente novamente em alguns minutos." },
   });
   app.use("/api/", limiter);
 
+  // Login tem balde separado e bem mais apertado: é a única rota que aceita
+  // segredo adivinhável, e o painel inteiro fica atrás dela.
+  const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "Muitas tentativas de login. Aguarde alguns minutos." },
+  });
+
   app.use(express.json({ limit: "1mb" }));
+  app.use(cookieParser());
 
   // ── Auth ──────────────────────────────────────────────────────────────────
-  app.post("/api/auth/login", (req, res) => {
+  app.post("/api/auth/login", loginLimiter, (req, res) => {
     const { password } = req.body;
     if (!password || typeof password !== "string") {
       res.status(400).json({ error: "Senha é obrigatória" });
       return;
     }
-    if (password !== config.web.authPassword) {
+    if (!verifyPassword(password, config.web.authPassword)) {
+      logger.warn("Failed login attempt", { ip: req.ip });
       res.status(401).json({ error: "Senha incorreta" });
       return;
     }
-    const token = generateToken();
-    res.json({ token });
+
+    // O token vai em cookie HttpOnly — o painel não o guarda em localStorage,
+    // então um XSS não consegue lê-lo. Não é devolvido no corpo de propósito.
+    res.cookie(AUTH_COOKIE, generateToken(), sessionCookieOptions());
+    res.json({ ok: true });
+  });
+
+  // Encerra a sessão. Sem isso o cookie só expirava sozinho.
+  app.post("/api/auth/logout", (_req, res) => {
+    res.clearCookie(AUTH_COOKIE, { ...sessionCookieOptions(), maxAge: undefined });
+    res.json({ ok: true });
+  });
+
+  // Diz ao painel se a sessão do cookie ainda vale (usado no boot do app).
+  app.get("/api/auth/session", authMiddleware, (_req, res) => {
+    res.json({ authenticated: true });
   });
 
   // ── Chat (SSE streaming) ─────────────────────────────────────────────────
@@ -185,7 +247,7 @@ export function createWebServer(toolRegistry: ToolRegistry, externalController?:
   });
 
   // ── Voice → Text (STT via OpenAI Whisper) ────────────────────────────────
-  app.post("/api/voice", authMiddleware, upload.single("audio"), async (req: any, res) => {
+  app.post("/api/voice", authMiddleware, upload.single("audio"), async (req: Request, res) => {
     const file = req.file;
     if (!file) {
       res.status(400).json({ error: "Nenhum arquivo de áudio enviado." });

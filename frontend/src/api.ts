@@ -3,27 +3,25 @@ import type { Agent, CompanyProfile, Deliverable, ScheduledTask, SystemStats, Co
 
 const API_BASE = "/api";
 
+// A sessão vive em um cookie HttpOnly, fora do alcance de JavaScript: nenhum
+// XSS consegue ler o token. `credentials: "include"` faz o browser anexar o
+// cookie em cada requisição (same-origin, então não há exposição cross-site).
 export async function apiFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const token = localStorage.getItem("token");
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...(options.headers as Record<string, string>),
   };
 
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
-  }
-
   const response = await fetch(`${API_BASE}${endpoint}`, {
     ...options,
     headers,
+    credentials: "include",
   });
 
   const data = await response.json();
 
   if (!response.ok) {
     if (response.status === 401 || response.status === 403) {
-      localStorage.removeItem("token");
       window.dispatchEvent(new Event("auth-changed"));
     }
     throw new Error(data.error || "Erro na requisição");
@@ -33,11 +31,25 @@ export async function apiFetch<T>(endpoint: string, options: RequestInit = {}): 
 }
 
 // ── Auth ──
-export async function login(password: string): Promise<{ token: string }> {
-  return apiFetch<{ token: string }>("/auth/login", {
+export async function login(password: string): Promise<{ ok: boolean }> {
+  return apiFetch<{ ok: boolean }>("/auth/login", {
     method: "POST",
     body: JSON.stringify({ password }),
   });
+}
+
+export async function logout(): Promise<{ ok: boolean }> {
+  return apiFetch<{ ok: boolean }>("/auth/logout", { method: "POST" });
+}
+
+/** Pergunta ao servidor se o cookie de sessão ainda é válido. */
+export async function checkSession(): Promise<boolean> {
+  try {
+    await apiFetch<{ authenticated: boolean }>("/auth/session");
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // ── Agents ──
@@ -215,8 +227,19 @@ export async function getSettings(): Promise<{ baseURL: string; model: string; a
   return apiFetch<{ baseURL: string; model: string; apiKeyMasked: string; source: string }>("/settings");
 }
 
-export async function updateSettings(data: { baseURL?: string; model?: string; apiKey?: string }): Promise<any> {
-  return apiFetch("/settings", {
+export interface LLMSettings {
+  baseURL: string;
+  model: string;
+  apiKeyMasked: string;
+  source: string;
+}
+
+export async function updateSettings(data: {
+  baseURL?: string;
+  model?: string;
+  apiKey?: string;
+}): Promise<LLMSettings> {
+  return apiFetch<LLMSettings>("/settings", {
     method: "PUT",
     body: JSON.stringify(data),
   });

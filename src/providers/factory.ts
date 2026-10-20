@@ -2,6 +2,7 @@
 import { logger } from "../utils/logger";
 import { LLMProvider, ChatMessage, ToolCall, ToolDefinitionParam } from "./types";
 import { OpenAIProvider } from "./openai";
+import { errorStatus, asErrorMeta } from "../utils/errors";
 
 /**
  * ProviderFactory — Singleton wrapper around the OpenAI provider.
@@ -12,8 +13,8 @@ const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503]);
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 1000;
 
-function isRetryable(err: any): boolean {
-  const status = err?.status ?? err?.response?.status;
+function isRetryable(err: unknown): boolean {
+  const status = errorStatus(err);
   return typeof status === "number" && RETRYABLE_STATUS_CODES.has(status);
 }
 
@@ -74,12 +75,12 @@ export class ProviderFactory {
    * Retry wrapper with exponential backoff for transient API errors.
    */
   private async withRetry<T>(fn: () => Promise<T>): Promise<T> {
-    let lastError: any = null;
+    let lastError: unknown = null;
 
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       try {
         return await fn();
-      } catch (err: any) {
+      } catch (err: unknown) {
         lastError = err;
 
         if (!isRetryable(err) || attempt === MAX_RETRIES) {
@@ -89,8 +90,8 @@ export class ProviderFactory {
         const delayMs = BASE_DELAY_MS * Math.pow(2, attempt - 1);
         logger.warn(`OpenAI request failed (attempt ${attempt}/${MAX_RETRIES}), retrying in ${delayMs}ms`, {
           error: String(err),
-          status: err?.status ?? err?.response?.status ?? "unknown",
-          code: err?.code ?? "unknown",
+          status: errorStatus(err) ?? "unknown",
+          code: asErrorMeta(err).code ?? "unknown",
         });
 
         await sleep(delayMs);
@@ -99,7 +100,7 @@ export class ProviderFactory {
 
     logger.error("OpenAI request failed after all retries", {
       error: String(lastError),
-      status: (lastError as any)?.status ?? "unknown",
+      status: errorStatus(lastError) ?? "unknown",
     });
     throw new Error(
       "O provedor de IA está indisponível no momento. Verifique sua OPENAI_API_KEY e OPENAI_BASE_URL e tente novamente."

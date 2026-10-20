@@ -350,7 +350,8 @@ export function getAgentById(id: string): AgentRecord | undefined {
 export function createCustomAgent(data: {
   name: string;
   role: string;
-  avatar: string;
+  /** Default "bot" quando omitido. */
+  avatar?: string;
   description: string;
   system_prompt: string;
   tools?: string[];
@@ -469,7 +470,8 @@ export function createDeliverable(data: {
   title: string;
   type: Deliverable["type"];
   summary: string;
-  content: any;
+  /** Payload estruturado gerado pelo LLM — validado por quem consome. */
+  content: unknown;
   status?: Deliverable["status"];
 }): Deliverable {
   const db = getDb();

@@ -2,6 +2,7 @@ import { exec } from "child_process";
 import { promisify } from "util";
 import { BaseTool, ToolResult } from "./types";
 import { logger } from "../utils/logger";
+import { asExecError } from "../utils/errors";
 
 const execAsync = promisify(exec);
 
@@ -37,12 +38,13 @@ export class RunCommandTool extends BaseTool {
       }
       
       return { output: output.trim() || "Command executed successfully (no output)." };
-    } catch (error: any) {
-      logger.warn("Command execution failed", { command, error: error.message });
-      return { 
-        output: `Error executing command: ${error.message}\n${error.stdout ? `[STDOUT]:\n${error.stdout}` : ''}\n${error.stderr ? `[STDERR]:\n${error.stderr}` : ''}`.trim(), 
-        isError: true 
-      };
+    } catch (error: unknown) {
+      const meta = asExecError(error);
+      logger.warn("Command execution failed", { command, error: meta.message });
+      const parts = [`Error executing command: ${meta.message}`];
+      if (meta.stdout) parts.push(`[STDOUT]:\n${meta.stdout}`);
+      if (meta.stderr) parts.push(`[STDERR]:\n${meta.stderr}`);
+      return { output: parts.join("\n").trim(), isError: true };
     }
   }
 }

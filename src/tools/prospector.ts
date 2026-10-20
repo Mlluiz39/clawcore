@@ -3,6 +3,7 @@ import { BaseTool, ToolResult } from "./types";
 import { logger } from "../utils/logger";
 import { exec } from "child_process";
 import { promisify } from "util";
+import { errorMessage } from "../utils/errors";
 
 const execAsync = promisify(exec);
 
@@ -64,9 +65,9 @@ export class B2BProspectorTool extends BaseTool {
         return await this.enrichPDL(args);
       }
       return { output: `Ação '${action}' desconhecida para b2b_prospector.`, isError: true };
-    } catch (err: any) {
+    } catch (err: unknown) {
       logger.error("B2BProspectorTool error", { error: String(err) });
-      return { output: `Erro na prospecção: ${err.message || String(err)}`, isError: true };
+      return { output: `Erro na prospecção: ${errorMessage(err)}`, isError: true };
     }
   }
 
@@ -238,11 +239,11 @@ export class B2BProspectorTool extends BaseTool {
       };
 
       return { output: JSON.stringify(audit, null, 2), isError: false };
-    } catch (e: any) {
+    } catch (e: unknown) {
       return {
         output: JSON.stringify({
           url: targetUrl,
-          error: e.message || String(e),
+          error: errorMessage(e),
           recommendation: "Não foi possível carregar o site diretamente. Pode estar bloqueando robôs ou fora do ar.",
         }),
         isError: true,
@@ -266,15 +267,12 @@ export class B2BProspectorTool extends BaseTool {
     const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
 
     let hasEvidences = false;
-    let snippetSample = "";
-
     try {
       const resp = await fetch(searchUrl, {
         headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
       });
       const html = await resp.text();
       hasEvidences = html.includes("facebook.com/ads") || html.includes("anúncio") || html.includes("campanha");
-      snippetSample = html.slice(0, 400).replace(/<[^>]+>/g, " ").trim();
     } catch {
       // fallback
     }
@@ -332,7 +330,6 @@ export class B2BProspectorTool extends BaseTool {
       const html = await resp.text();
 
       const deciders: Array<{ name: string; title: string; linkedin_url: string }> = [];
-      const resultMatches = html.match(/<a class="result__url"[^>]*href="([^"]+)"[^>]*>[\s\S]*?<\/a>/gi) || [];
       const titleMatches = html.match(/<a class="result__a"[^>]*>([\s\S]*?)<\/a>/gi) || [];
 
       for (let i = 0; i < Math.min(titleMatches.length, 5); i++) {
@@ -362,8 +359,8 @@ export class B2BProspectorTool extends BaseTool {
         ),
         isError: false,
       };
-    } catch (e: any) {
-      return { output: `Falha ao enriquecer decisores: ${e.message || String(e)}`, isError: true };
+    } catch (e: unknown) {
+      return { output: `Falha ao enriquecer decisores: ${errorMessage(e)}`, isError: true };
     }
   }
 }

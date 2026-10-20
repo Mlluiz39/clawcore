@@ -5,6 +5,7 @@ import { ToolRegistry } from "../tools/registry";
 import { logger } from "../utils/logger";
 import { config } from "../utils/config";
 import { createFileMarkerFilter } from "./output-filter";
+import { errorMessage } from "../utils/errors";
 
 export interface AgentResult {
   text: string;
@@ -75,9 +76,9 @@ export async function runAgentLoop(
       result = await factory.chatWithToolsStream(currentMessages, tools, (delta) => {
         emit(filter.push(delta));
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       logger.error("ReAct Loop — LLM call failed", { error: String(err), iteration });
-      const errDetail = err?.message || String(err);
+      const errDetail = errorMessage(err);
       return {
         text: `⚠️ Erro no provedor de IA (${errDetail}). Verifique o modelo nas Configurações do painel.`,
         isFile: false,

@@ -10,7 +10,7 @@ export interface Skill {
 }
 
 const SKILLS_DIR = path.resolve(process.cwd(), ".agents", "skills");
-let _skills: Map<string, Skill> = new Map();
+const _skills: Map<string, Skill> = new Map();
 
 /**
  * Parse YAML-like frontmatter from a SKILL.md file.

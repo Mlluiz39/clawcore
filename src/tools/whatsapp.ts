@@ -1,5 +1,6 @@
 import { BaseTool, ToolResult } from "./types";
 import { WhatsAppClient } from "../utils/whatsapp-client";
+import { errorMessage } from "../utils/errors";
 
 /**
  * WhatsApp integration tool for ClawCore.
@@ -36,50 +37,59 @@ export class WhatsAppTool extends BaseTool {
 
     try {
       switch (args.action) {
-        case "login":
+        // Cada case tem bloco próprio: `const` dentro de um case sem chaves
+        // vaza para os cases seguintes (no-case-declarations).
+        case "login": {
           await client.init();
-          const alreadyConnected = await client.isConnected();
-          if (alreadyConnected) {
+          if (await client.isConnected()) {
             return { output: "WhatsApp is already connected." };
           }
-          return { 
-            output: "WhatsApp initialization started. QR code is in server logs if needed." 
+          return {
+            output: "WhatsApp initialization started. QR code is in server logs if needed.",
           };
+        }
 
-        case "send_message":
+        case "send_message": {
           if (!args.jid || !args.text) {
             return { output: "Error: 'jid' and 'text' required.", isError: true };
           }
           await client.sendMessage(args.jid, args.text);
           return { output: `Message sent to ${args.jid}` };
+        }
 
-        case "list_chats":
+        case "list_chats": {
           const chats = await client.listChats(args.limit);
-          const chatList = chats.map((c: any) => `- ${c.id} (${c.name || "Sem nome"})`).join("\n");
+          const chatList = chats.map((c) => `- ${c.id} (${c.name || "Sem nome"})`).join("\n");
           return { output: `Recent WhatsApp Chats:\n${chatList || "No chats found."}` };
+        }
 
-        case "read_messages":
+        case "read_messages": {
           if (!args.jid) {
             return { output: "Error: 'jid' required to read messages.", isError: true };
           }
           const messages = await client.getMessages(args.jid, args.limit);
-          const msgList = messages.map((m: any) => {
-            const sender = m.key.fromMe ? "Eu" : "Eles";
-            const content = m.message?.conversation || m.message?.extendedTextMessage?.text || "[Mídia/Outro]";
-            return `[${sender}] ${content}`;
-          }).join("\n");
+          const msgList = messages
+            .map((m) => {
+              const sender = m.key.fromMe ? "Eu" : "Eles";
+              const content =
+                m.message?.conversation || m.message?.extendedTextMessage?.text || "[Mídia/Outro]";
+              return `[${sender}] ${content}`;
+            })
+            .join("\n");
           return { output: `Recent messages for ${args.jid}:\n${msgList || "No messages found."}` };
+        }
 
-        case "status":
+        case "status": {
           const connected = await client.isConnected();
           return { output: `WhatsApp status: ${connected ? "Connected" : "Disconnected"}` };
+        }
 
         default:
           return { output: `Unknown action '${args.action}'.`, isError: true };
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("[WhatsAppTool] Error:", error);
-      return { output: `WhatsApp error: ${error.message}`, isError: true };
+      return { output: `WhatsApp error: ${errorMessage(error)}`, isError: true };
     }
   }
 }

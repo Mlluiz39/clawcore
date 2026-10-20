@@ -3,6 +3,7 @@ import { exec } from "child_process";
 import { promisify } from "util";
 import { BaseTool, ToolResult } from "./types";
 import { logger } from "../utils/logger";
+import { asExecError } from "../utils/errors";
 
 const execAsync = promisify(exec);
 
@@ -109,8 +110,9 @@ export class GlasserTool extends BaseTool {
       }
 
       return { output: `Ação desconhecida: ${action}`, isError: true };
-    } catch (err: any) {
-      const msg = err.stderr || err.stdout || err.message || String(err);
+    } catch (err: unknown) {
+      const exec = asExecError(err);
+      const msg = exec.stderr || exec.stdout || exec.message;
       logger.error("Glasser execution error", { error: msg });
       return {
         output:

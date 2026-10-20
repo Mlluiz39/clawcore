@@ -1,6 +1,6 @@
 // src/tools/company-brain.ts
 import { BaseTool, ToolResult } from "./types";
-import { getCompanyProfile, updateCompanyProfile } from "../memory/repository";
+import { getCompanyProfile, updateCompanyProfile, type CompanyProfile } from "../memory/repository";
 
 export class CompanyBrainTool extends BaseTool {
   name = "company_brain";
@@ -45,7 +45,7 @@ export class CompanyBrainTool extends BaseTool {
     const action = String(args.action || "get");
 
     if (action === "update") {
-      const updateData: any = {};
+      const updateData: Partial<Omit<CompanyProfile, "id" | "updated_at">> = {};
       if (args.company_name) updateData.company_name = String(args.company_name);
       if (args.niche) updateData.niche = String(args.niche);
       if (args.target_audience) updateData.target_audience = String(args.target_audience);

@@ -1,7 +1,10 @@
-import makeWASocket, { 
-  DisconnectReason, 
-  useMultiFileAuthState, 
-  fetchLatestBaileysVersion
+import makeWASocket, {
+  DisconnectReason,
+  useMultiFileAuthState,
+  fetchLatestBaileysVersion,
+  type WASocket,
+  type Chat,
+  type WAMessage,
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import qrcode from 'qrcode-terminal';
@@ -13,12 +16,12 @@ const logger = pino({ level: 'silent' });
 
 export class WhatsAppClient {
   private static instance: WhatsAppClient;
-  public sock: any;
+  public sock: WASocket | undefined;
   private isInitializing = false;
 
   // Manual In-Memory Store
-  private _chats = new Map<string, any>();
-  private _messages = new Map<string, any[]>();
+  private _chats = new Map<string, Chat>();
+  private _messages = new Map<string, WAMessage[]>();
 
   private constructor() {}
 
@@ -52,7 +55,7 @@ export class WhatsAppClient {
 
       this.sock.ev.on('creds.update', saveCreds);
 
-      this.sock.ev.on('connection.update', (update: any) => {
+      this.sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect, qr } = update;
         
         if (qr) {
@@ -76,11 +79,15 @@ export class WhatsAppClient {
       });
 
       // Track history sync
-      this.sock.ev.on('messaging-history.set', (history: any) => {
+      this.sock.ev.on('messaging-history.set', (history) => {
         const { chats, messages } = history;
-        chats?.forEach((chat: any) => this._chats.set(chat.id, { ...this._chats.get(chat.id), ...chat }));
-        messages?.forEach((msg: any) => {
-          const jid = msg.key.remoteJid;
+        chats?.forEach((chat) => {
+          if (!chat.id) return;
+          this._chats.set(chat.id, { ...this._chats.get(chat.id), ...chat });
+        });
+        messages?.forEach((msg) => {
+          const jid = msg.key?.remoteJid;
+          if (!jid) return;
           if (!this._messages.has(jid)) this._messages.set(jid, []);
           this._messages.get(jid)!.push(msg);
         });
@@ -88,14 +95,18 @@ export class WhatsAppClient {
       });
 
       // Simple store logic
-      this.sock.ev.on('chats.upsert', (newChats: any[]) => {
-        newChats.forEach(chat => this._chats.set(chat.id, { ...this._chats.get(chat.id), ...chat }));
+      this.sock.ev.on('chats.upsert', (newChats) => {
+        newChats.forEach((chat) => {
+          if (!chat.id) return;
+          this._chats.set(chat.id, { ...this._chats.get(chat.id), ...chat });
+        });
       });
-      
-      this.sock.ev.on('messages.upsert', (m: any) => {
+
+      this.sock.ev.on('messages.upsert', (m) => {
         if (m.type === 'notify') {
           for (const msg of m.messages) {
-            const jid = msg.key.remoteJid;
+            const jid = msg.key?.remoteJid;
+            if (!jid) continue;
             if (!this._messages.has(jid)) this._messages.set(jid, []);
             const chatMsgs = this._messages.get(jid)!;
             chatMsgs.push(msg);

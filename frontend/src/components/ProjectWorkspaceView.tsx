@@ -1,6 +1,6 @@
 // frontend/src/components/ProjectWorkspaceView.tsx
-import { useState, useEffect, useRef } from "react";
-import type { Project, Agent, Conversation, Message, ScheduledTask, Deliverable, MessageMetadata } from "../types";
+import { useState, useEffect, useRef, useCallback } from "react";
+import type { Project, Agent, Message, ScheduledTask, Deliverable } from "../types";
 import {
   getConversations,
   createConversation,
@@ -12,29 +12,21 @@ import {
 import {
   MessageSquare,
   FileText,
-  Bot,
   RefreshCw,
-  Send,
-  Sparkles,
+  Bot,
   Loader2,
-  FileSpreadsheet,
-  Check,
+  Sparkles,
   Play,
   Calendar,
   Mail,
-  Copy,
-  ThumbsUp,
-  ThumbsDown,
-  ChevronRight,
   TrendingUp,
   Activity,
   Layers,
   PanelRightClose,
   PanelRightOpen,
   Plus,
-  ArrowRight,
 } from "lucide-react";
-import { marked } from "marked";
+import { ChatFeed } from "./ChatFeed";
 
 interface ProjectWorkspaceViewProps {
   project: Project;
@@ -44,16 +36,6 @@ interface ProjectWorkspaceViewProps {
 }
 
 type WorkspaceTab = "conversation" | "pages" | "agents" | "routines";
-
-function parseRoutineMetadata(msg: Message): MessageMetadata | null {
-  if (!msg.metadata_json) return null;
-  try {
-    const parsed = JSON.parse(msg.metadata_json) as MessageMetadata;
-    return parsed?.source === "routine" && parsed.routine_title ? parsed : null;
-  } catch {
-    return null;
-  }
-}
 
 export function ProjectWorkspaceView({
   project,
@@ -66,7 +48,6 @@ export function ProjectWorkspaceView({
   const [rightSidebarTab, setRightSidebarTab] = useState<"info" | "worklog">("info");
 
   // Project state
-  const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [routines, setRoutines] = useState<ScheduledTask[]>([]);
@@ -83,17 +64,64 @@ export function ProjectWorkspaceView({
   // Active project agent
   const projectAgent = agents.find((a) => a.id === selectedAgentId) || agents[0];
 
-  useEffect(() => {
-    loadProjectData();
+  const loadProjectConversations = useCallback(async () => {
+    try {
+      const res = await getConversations(undefined, project.id);
+      if (res.conversations.length > 0) {
+        setActiveConvId(res.conversations[0].id);
+      } else {
+        // Criar conversa padrão para o projeto
+        const newConv = await createConversation("coo", project.id);
+        setActiveConvId(newConv.conversation.id);
+      }
+    } catch (err) {
+      console.error("Erro ao carregar conversas do projeto:", err);
+    }
   }, [project.id]);
+
+  const loadProjectRoutines = useCallback(async () => {
+    try {
+      const res = await getScheduledTasks(project.id);
+      setRoutines(res.tasks);
+    } catch (err) {
+      console.error("Erro ao carregar rotinas do projeto:", err);
+    }
+  }, [project.id]);
+
+  const loadProjectDeliverables = useCallback(async () => {
+    try {
+      const res = await getDeliverables(undefined, project.id);
+      setDeliverables(res.deliverables);
+    } catch (err) {
+      console.error("Erro ao carregar entregáveis do projeto:", err);
+    }
+  }, [project.id]);
+
+  const loadMessages = useCallback(async (convId: string) => {
+    try {
+      const res = await getMessages(convId);
+      if (isStreamingRef.current) return;
+      setMessages(res.messages);
+    } catch (err) {
+      console.error("Erro ao carregar mensagens:", err);
+    }
+  }, []);
+
+  const loadProjectData = useCallback(async () => {
+    await Promise.all([loadProjectConversations(), loadProjectRoutines(), loadProjectDeliverables()]);
+  }, [loadProjectConversations, loadProjectRoutines, loadProjectDeliverables]);
+
+  useEffect(() => {
+    void loadProjectData();
+  }, [loadProjectData]);
 
   useEffect(() => {
     if (activeConvId) {
-      loadMessages(activeConvId);
+      void loadMessages(activeConvId);
     } else {
       setMessages([]);
     }
-  }, [activeConvId]);
+  }, [activeConvId, loadMessages]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -105,61 +133,12 @@ export function ProjectWorkspaceView({
     const interval = setInterval(() => {
       if (isStreamingRef.current) return;
       if (activeConvId) {
-        loadMessages(activeConvId);
+        void loadMessages(activeConvId);
       }
-      loadProjectRoutines();
+      void loadProjectRoutines();
     }, 10_000);
     return () => clearInterval(interval);
-  }, [activeConvId, project.id, isStreaming]);
-
-  const loadProjectData = async () => {
-    await Promise.all([loadProjectConversations(), loadProjectRoutines(), loadProjectDeliverables()]);
-  };
-
-  const loadProjectConversations = async () => {
-    try {
-      const res = await getConversations(undefined, project.id);
-      setConversations(res.conversations);
-      if (res.conversations.length > 0) {
-        setActiveConvId(res.conversations[0].id);
-      } else {
-        // Criar conversa padrão para o projeto
-        const newConv = await createConversation("coo", project.id);
-        setConversations([newConv.conversation]);
-        setActiveConvId(newConv.conversation.id);
-      }
-    } catch (err) {
-      console.error("Erro ao carregar conversas do projeto:", err);
-    }
-  };
-
-  const loadProjectRoutines = async () => {
-    try {
-      const res = await getScheduledTasks(project.id);
-      setRoutines(res.tasks);
-    } catch (err) {
-      console.error("Erro ao carregar rotinas do projeto:", err);
-    }
-  };
-
-  const loadProjectDeliverables = async () => {
-    try {
-      const res = await getDeliverables(undefined, project.id);
-      setDeliverables(res.deliverables);
-    } catch (err) {
-      console.error("Erro ao carregar entregáveis do projeto:", err);
-    }
-  };
-
-  const loadMessages = async (convId: string) => {
-    try {
-      const res = await getMessages(convId);
-      if (isStreamingRef.current) return;
-      setMessages(res.messages);
-    } catch (err) {
-      console.error("Erro ao carregar mensagens:", err);
-    }
-  };
+  }, [activeConvId, isStreaming, loadMessages, loadProjectRoutines]);
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -180,13 +159,11 @@ export function ProjectWorkspaceView({
     isStreamingRef.current = true;
 
     try {
-      const token = localStorage.getItem("token");
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
-      if (token) headers["Authorization"] = `Bearer ${token}`;
-
+      // A sessão vai no cookie HttpOnly — `credentials: "include"` o anexa.
       const response = await fetch("/api/chat", {
         method: "POST",
-        headers,
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: userText,
           conversationId: activeConvId,
@@ -226,8 +203,8 @@ export function ProjectWorkspaceView({
             if (line.startsWith("data: ")) {
               try {
                 const data = JSON.parse(line.substring(6));
-                if (data.type === "chunk" && data.text) {
-                  assistantContent += data.text;
+                if (data.type === "chunk" && data.content) {
+                  assistantContent += data.content;
                   setMessages((prev) => {
                     const next = [...prev];
                     const last = next[next.length - 1];
@@ -236,8 +213,40 @@ export function ProjectWorkspaceView({
                     }
                     return next;
                   });
+                } else if (data.type === "discard") {
+                  // O texto transmitido era raciocínio interno de uma rodada que
+                  // acabou chamando ferramenta — não é a resposta final.
+                  assistantContent = "";
+                  setMessages((prev) => {
+                    const next = [...prev];
+                    const last = next[next.length - 1];
+                    if (last && last.role === "assistant") {
+                      last.content = "";
+                    }
+                    return next;
+                  });
                 } else if (data.type === "conv_id" && data.conversationId) {
                   setActiveConvId(data.conversationId);
+                } else if (data.type === "done") {
+                  setMessages((prev) => {
+                    const next = [...prev];
+                    const last = next[next.length - 1];
+                    if (last && last.role === "assistant") {
+                      last.isStreaming = false;
+                    }
+                    return next;
+                  });
+                } else if (data.type === "error" && data.message) {
+                  assistantContent = data.message;
+                  setMessages((prev) => {
+                    const next = [...prev];
+                    const last = next[next.length - 1];
+                    if (last && last.role === "assistant") {
+                      last.content = data.message;
+                      last.isStreaming = false;
+                    }
+                    return next;
+                  });
                 }
               } catch {
                 // ignora linhas não-JSON
@@ -284,189 +293,23 @@ export function ProjectWorkspaceView({
   };
 
   // Renderizador do Chat (reutilizado na coluna principal e no Drawer lateral)
-  const renderChatFeed = (isDrawer = false) => (
-    <div className="flex-1 flex flex-col h-full overflow-hidden bg-[#0a0d14]/60">
-      {/* Mensagens */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {messages.length === 0 && (
-          <div className="text-center py-12 text-[#64748b] text-xs">
-            <Bot className="w-8 h-8 mx-auto mb-2 opacity-40 text-purple-400" />
-            <p>Nenhuma mensagem nesta conversa ainda.</p>
-            <p className="mt-1 text-[11px] text-[#475569]">Pergunte algo ou solicite uma tarefa para a equipe do projeto.</p>
-          </div>
-        )}
-
-        {messages.map((msg, idx) => {
-          const meta = parseRoutineMetadata(msg);
-          const isAssistant = msg.role === "assistant";
-          const msgKey = msg.id || `msg-${idx}`;
-
-          return (
-            <div
-              key={msgKey}
-              className={`flex flex-col ${msg.role === "user" ? "items-end" : "items-start"}`}
-            >
-              {/* Badge Proactive */}
-              {meta && (
-                <div className="flex items-center gap-2 mb-1.5 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[10px] text-emerald-300 font-mono">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  <span className="font-semibold">Proactive</span>
-                  <span className="text-[#64748b]">·</span>
-                  <span>Worked for {Math.round(meta.duration_ms / 1000)}s</span>
-                  <span className="text-[#64748b]">·</span>
-                  <span>{meta.steps} steps</span>
-                </div>
-              )}
-
-              <div
-                className={`max-w-[85%] rounded-2xl px-4 py-3 text-xs leading-relaxed ${
-                  msg.role === "user"
-                    ? "bg-purple-600 text-white shadow-lg shadow-purple-600/20"
-                    : "bg-[#121622] text-[#e2e8f0] border border-white/[0.06]"
-                }`}
-              >
-                {/* Cabeçalho de rotina */}
-                {meta && (
-                  <div className="mb-2 pb-2 border-b border-white/[0.08] flex items-center justify-between text-[11px] text-[#94a3b8]">
-                    <div className="flex items-center gap-1.5">
-                      <span className="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 font-bold text-[9px]">
-                        Fired
-                      </span>
-                      <span className="font-semibold text-white">{meta.routine_title}</span>
-                    </div>
-                  </div>
-                )}
-
-                {/* Conteúdo Markdown */}
-                <div
-                  className="prose prose-invert prose-xs max-w-none break-words"
-                  dangerouslySetInnerHTML={{ __html: marked.parse(msg.content || "") as string }}
-                />
-
-                {/* Card de Entregável Acoplado (caso haja entregáveis no projeto) */}
-                {isAssistant && deliverables.length > 0 && idx === messages.length - 1 && (
-                  <div className="mt-3 pt-3 border-t border-white/[0.06]">
-                    <div className="p-2.5 rounded-xl bg-[#0f172a] border border-emerald-500/30 flex items-center justify-between hover:border-emerald-500/50 transition-colors">
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <div className="w-8 h-8 rounded-lg bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center shrink-0">
-                          <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
-                        </div>
-                        <div className="min-w-0">
-                          <p className="font-mono text-[11px] text-white truncate font-medium">
-                            {deliverables[0].title}.csv
-                          </p>
-                          <span className="text-[10px] text-emerald-400 font-mono uppercase">CSV · Pronto</span>
-                        </div>
-                      </div>
-                      {onGoToInbox && (
-                        <button
-                          onClick={onGoToInbox}
-                          className="px-2.5 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 text-[10px] font-semibold transition-colors cursor-pointer"
-                        >
-                          Ver Inbox
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Ações da Mensagem */}
-              {isAssistant && !msg.isStreaming && (
-                <div className="flex items-center gap-1 mt-1 px-1 text-[#64748b]">
-                  <button
-                    onClick={() => handleCopyMessage(msgKey, msg.content)}
-                    title="Copiar resposta"
-                    className="p-1 hover:text-white rounded hover:bg-white/[0.04] transition-colors cursor-pointer"
-                  >
-                    {copiedMsgId === msgKey ? (
-                      <Check className="w-3 h-3 text-emerald-400" />
-                    ) : (
-                      <Copy className="w-3 h-3" />
-                    )}
-                  </button>
-                  <button
-                    title="Útil"
-                    className="p-1 hover:text-white rounded hover:bg-white/[0.04] transition-colors cursor-pointer"
-                  >
-                    <ThumbsUp className="w-3 h-3" />
-                  </button>
-                  <button
-                    title="Não foi útil"
-                    className="p-1 hover:text-white rounded hover:bg-white/[0.04] transition-colors cursor-pointer"
-                  >
-                    <ThumbsDown className="w-3 h-3" />
-                  </button>
-                  <button
-                    onClick={() => alert("Credit Rescue: verificação de execução sem débito registrada.")}
-                    className="text-[10px] px-1.5 py-0.5 rounded text-[#94a3b8] hover:text-purple-300 hover:bg-purple-500/10 transition-colors cursor-pointer"
-                  >
-                    ✦ Credit Rescue
-                  </button>
-                </div>
-              )}
-            </div>
-          );
-        })}
-        <div ref={messagesEndRef} />
-      </div>
-
-      {/* Input de Chat */}
-      <div className="p-3 border-t border-white/[0.06] bg-[#0c101a]">
-        <div className="flex items-center justify-between mb-2 text-[11px] text-[#94a3b8]">
-          <div className="flex items-center gap-1.5">
-            <span>Talk to:</span>
-            <select
-              value={selectedAgentId}
-              onChange={(e) => setSelectedAgentId(e.target.value)}
-              className="bg-[#161b26] border border-white/[0.08] text-white text-[11px] rounded-lg px-2 py-0.5 cursor-pointer outline-none focus:border-purple-500"
-            >
-              {agents.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name} ({a.role})
-                </option>
-              ))}
-            </select>
-          </div>
-          {onGoToStudio && (
-            <button
-              onClick={() => onGoToStudio(selectedAgentId)}
-              className="hover:text-white transition-colors cursor-pointer flex items-center gap-1 text-[10px]"
-            >
-              <span>Abrir no Studio</span>
-              <ArrowRight className="w-3 h-3" />
-            </button>
-          )}
-        </div>
-
-        <form onSubmit={handleSendMessage} className="relative flex items-center">
-          <input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            disabled={isStreaming}
-            placeholder="Boss, what stresses you out? Hand it over."
-            className="w-full bg-[#121622] border border-white/[0.08] rounded-xl px-3.5 py-2.5 pr-20 text-xs text-white placeholder-[#64748b] focus:outline-none focus:border-purple-500/50"
-          />
-          <div className="absolute right-1.5 flex items-center gap-1">
-            <span className="text-[10px] font-mono text-[#64748b] px-1.5 py-0.5 rounded bg-white/[0.02]">
-              Smart ▾
-            </span>
-            <button
-              type="submit"
-              disabled={isStreaming || !input.trim()}
-              className="p-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 disabled:opacity-40 text-white transition-colors cursor-pointer"
-            >
-              {isStreaming ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <Send className="w-3.5 h-3.5" />
-              )}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+  const chatFeed = (
+    <ChatFeed
+      messages={messages}
+      agents={agents}
+      selectedAgentId={selectedAgentId}
+      onSelectAgent={setSelectedAgentId}
+      deliverables={deliverables}
+      input={input}
+      onInputChange={setInput}
+      onSubmit={handleSendMessage}
+      isStreaming={isStreaming}
+      messagesEndRef={messagesEndRef}
+      copiedMsgId={copiedMsgId}
+      onCopyMessage={handleCopyMessage}
+      onGoToInbox={onGoToInbox}
+      onGoToStudio={onGoToStudio}
+    />
   );
 
   return (
@@ -558,7 +401,7 @@ export function ProjectWorkspaceView({
         {/* Painel Central */}
         <div className="flex-1 flex flex-col overflow-hidden">
           {/* ABA CONVERSATION */}
-          {activeTab === "conversation" && renderChatFeed(false)}
+          {activeTab === "conversation" && chatFeed}
 
           {/* ABA PAGES */}
           {activeTab === "pages" && (
@@ -875,7 +718,7 @@ export function ProjectWorkspaceView({
                     <span>Project Conversation</span>
                   </div>
                 </div>
-                {renderChatFeed(true)}
+                {chatFeed}
               </div>
             )}
           </aside>

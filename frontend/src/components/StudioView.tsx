@@ -1,6 +1,6 @@
 // frontend/src/components/StudioView.tsx
-import { useState, useEffect, useRef } from "react";
-import type { Agent, Conversation, Message, MessageMetadata } from "../types";
+import { useState, useEffect, useRef, useCallback } from "react";
+import type { Agent, Conversation, Message } from "../types";
 import { getConversations, createConversation, getMessages, deleteConversation } from "../api";
 import {
   Send,
@@ -12,7 +12,8 @@ import {
   Inbox,
   Zap,
 } from "lucide-react";
-import { marked } from "marked";
+import { renderMarkdown } from "../markdown";
+import { parseRoutineMetadata } from "../routine-metadata";
 
 interface StudioViewProps {
   agents: Agent[];
@@ -21,16 +22,6 @@ interface StudioViewProps {
 }
 
 /** Lê a atribuição gravada pelo backend; metadado inválido é ignorado em vez de quebrar o thread. */
-function parseRoutineMetadata(msg: Message): MessageMetadata | null {
-  if (!msg.metadata_json) return null;
-  try {
-    const parsed = JSON.parse(msg.metadata_json) as MessageMetadata;
-    return parsed?.source === "routine" && parsed.routine_title ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
 export function StudioView({ agents, initialAgentId, onGoToInbox }: StudioViewProps) {
   const [selectedAgentId, setSelectedAgentId] = useState<string>(initialAgentId || "cmo");
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -50,19 +41,44 @@ export function StudioView({ agents, initialAgentId, onGoToInbox }: StudioViewPr
     }
   }, [initialAgentId]);
 
+  const loadConversations = useCallback(async () => {
+    try {
+      const res = await getConversations(selectedAgentId);
+      setConversations(res.conversations);
+      if (res.conversations.length > 0) {
+        setActiveConvId(res.conversations[0].id);
+      } else {
+        setActiveConvId(null);
+      }
+    } catch (err) {
+      console.error("Error loading conversations", err);
+    }
+  }, [selectedAgentId]);
+
+  const loadMessages = useCallback(async (convId: string) => {
+    try {
+      const res = await getMessages(convId);
+      // Não sobrescreve o envio em andamento com o estado antigo do servidor.
+      if (isStreamingRef.current) return;
+      setMessages(res.messages);
+    } catch (err) {
+      console.error("Error loading messages", err);
+    }
+  }, []);
+
   // Load conversations when agent changes
   useEffect(() => {
-    loadConversations();
-  }, [selectedAgentId]);
+    void loadConversations();
+  }, [loadConversations]);
 
   // Load messages when activeConvId changes
   useEffect(() => {
     if (activeConvId) {
-      loadMessages(activeConvId);
+      void loadMessages(activeConvId);
     } else {
       setMessages([]);
     }
-  }, [activeConvId]);
+  }, [activeConvId, loadMessages]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -76,39 +92,14 @@ export function StudioView({ agents, initialAgentId, onGoToInbox }: StudioViewPr
     const interval = setInterval(() => {
       if (isStreamingRef.current) return;
       if (activeConvId) {
-        loadMessages(activeConvId);
+        void loadMessages(activeConvId);
       } else {
-        loadConversations();
+        void loadConversations();
       }
     }, 10_000);
 
     return () => clearInterval(interval);
-  }, [activeConvId, selectedAgentId, isStreaming]);
-
-  const loadConversations = async () => {
-    try {
-      const res = await getConversations(selectedAgentId);
-      setConversations(res.conversations);
-      if (res.conversations.length > 0) {
-        setActiveConvId(res.conversations[0].id);
-      } else {
-        setActiveConvId(null);
-      }
-    } catch (err) {
-      console.error("Error loading conversations", err);
-    }
-  };
-
-  const loadMessages = async (convId: string) => {
-    try {
-      const res = await getMessages(convId);
-      // Não sobrescreve o envio em andamento com o estado antigo do servidor.
-      if (isStreamingRef.current) return;
-      setMessages(res.messages);
-    } catch (err) {
-      console.error("Error loading messages", err);
-    }
-  };
+  }, [activeConvId, isStreaming, loadMessages, loadConversations]);
 
   const handleNewConversation = async () => {
     try {
@@ -146,15 +137,12 @@ export function StudioView({ agents, initialAgentId, onGoToInbox }: StudioViewPr
     isStreamingRef.current = true;
     setIsStreaming(true);
 
-    const token = localStorage.getItem("token");
-
     try {
+      // A sessão vai no cookie HttpOnly — `credentials: "include"` o anexa.
       const response = await fetch("/api/chat", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: token ? `Bearer ${token}` : "",
-        },
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: textToSend,
           conversationId: activeConvId,
@@ -203,11 +191,34 @@ export function StudioView({ agents, initialAgentId, onGoToInbox }: StudioViewPr
                     }
                     return next;
                   });
+                } else if (data.type === "discard") {
+                  // O texto transmitido era raciocínio interno de uma rodada que
+                  // acabou chamando ferramenta — não é a resposta final.
+                  assistantMsgContent = "";
+                  setMessages((prev) => {
+                    const next = [...prev];
+                    const last = next[next.length - 1];
+                    if (last && last.role === "assistant") {
+                      last.content = "";
+                    }
+                    return next;
+                  });
                 } else if (data.type === "done") {
                   setMessages((prev) => {
                     const next = [...prev];
                     const last = next[next.length - 1];
                     if (last && last.role === "assistant") {
+                      last.isStreaming = false;
+                    }
+                    return next;
+                  });
+                } else if (data.type === "error" && data.message) {
+                  assistantMsgContent = data.message;
+                  setMessages((prev) => {
+                    const next = [...prev];
+                    const last = next[next.length - 1];
+                    if (last && last.role === "assistant") {
+                      last.content = data.message;
                       last.isStreaming = false;
                     }
                     return next;
@@ -220,7 +231,7 @@ export function StudioView({ agents, initialAgentId, onGoToInbox }: StudioViewPr
           }
         }
       }
-    } catch (err) {
+    } catch {
       setMessages((prev) => [
         ...prev,
         {
@@ -431,7 +442,7 @@ export function StudioView({ agents, initialAgentId, onGoToInbox }: StudioViewPr
                       <>
                         <div
                           className="prose prose-invert max-w-none text-xs sm:text-sm"
-                          dangerouslySetInnerHTML={{ __html: marked.parse(msg.content || "") as string }}
+                          dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.content) }}
                         />
                         {msg.isStreaming && (
                           <span className="inline-block w-2 h-4 bg-purple-400 animate-pulse ml-1 align-middle" />

@@ -57,6 +57,20 @@ export class ProviderFactory {
   }
 
   /**
+   * Versão com streaming. Deliberadamente SEM retry: o consumidor já recebeu
+   * parte do texto via `onDelta`, então repetir a chamada duplicaria o que o
+   * usuário vê. Erros transitórios são repassados para quem chamou decidir.
+   */
+  async chatWithToolsStream(
+    messages: ChatMessage[],
+    tools: ToolDefinitionParam[],
+    onDelta: (text: string) => void
+  ): Promise<{ content: string | null; toolCalls: ToolCall[]; provider: string }> {
+    const result = await this.provider.chatWithToolsStream(messages, tools, onDelta);
+    return { ...result, provider: this.provider.name };
+  }
+
+  /**
    * Retry wrapper with exponential backoff for transient API errors.
    */
   private async withRetry<T>(fn: () => Promise<T>): Promise<T> {

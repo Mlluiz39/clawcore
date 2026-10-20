@@ -27,6 +27,10 @@ export interface ProcessMessageOptions {
   messageMetadata?: MessageMetadata;
   /** Reaproveita o thread do agente em vez de criar uma conversa nova a cada execução. */
   reuseThread?: boolean;
+  /** Repassa o texto ao consumidor conforme é gerado (usado pelo SSE do painel). */
+  onDelta?: (text: string) => void;
+  /** Avisa que o texto já repassado era raciocínio interno e deve ser descartado. */
+  onDiscard?: () => void;
 }
 
 /**
@@ -107,7 +111,10 @@ export class AgentController {
     });
 
     // 5. Run ReAct Agent Loop
-    const result = await runAgentLoop(messages, this.toolRegistry);
+    const result = await runAgentLoop(messages, this.toolRegistry, {
+      onDelta: options?.onDelta,
+      onDiscard: options?.onDiscard,
+    });
 
     // 6. Handle audio flag from input metadata
     if (options?.requiresAudioReply) {

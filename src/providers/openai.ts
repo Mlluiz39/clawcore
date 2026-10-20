@@ -89,4 +89,61 @@ export class OpenAIProvider implements LLMProvider {
 
     return { content: choice?.content ?? null, toolCalls };
   }
+
+  /**
+   * Versão com streaming de `chatWithTools`.
+   *
+   * Os deltas chegam intercalados: texto do assistente e fragmentos de tool call
+   * compartilham o mesmo stream. Fragmentos de tool call são remontados por
+   * índice (o `id` e o `name` só vêm no primeiro fragmento; `arguments` chega
+   * picado e precisa ser concatenado).
+   */
+  async chatWithToolsStream(
+    messages: ChatMessage[],
+    tools: ToolDefinitionParam[],
+    onDelta: (text: string) => void
+  ): Promise<{ content: string | null; toolCalls: ToolCall[] }> {
+    this.refresh();
+
+    const stream = await this.client.chat.completions.create({
+      model: this.model,
+      messages: messages as OpenAI.ChatCompletionMessageParam[],
+      tools: tools as OpenAI.ChatCompletionTool[],
+      max_tokens: 8192,
+      stream: true,
+    });
+
+    let content = "";
+    const partials = new Map<number, { id: string; name: string; args: string }>();
+
+    for await (const chunk of stream) {
+      const delta = chunk.choices[0]?.delta;
+      if (!delta) continue;
+
+      if (delta.content) {
+        content += delta.content;
+        onDelta(delta.content);
+      }
+
+      for (const tc of delta.tool_calls ?? []) {
+        const index = tc.index ?? 0;
+        const acc = partials.get(index) ?? { id: "", name: "", args: "" };
+        if (tc.id) acc.id = tc.id;
+        if (tc.function?.name) acc.name = tc.function.name;
+        if (tc.function?.arguments) acc.args += tc.function.arguments;
+        partials.set(index, acc);
+      }
+    }
+
+    const toolCalls: ToolCall[] = [...partials.entries()]
+      .sort(([a], [b]) => a - b)
+      .filter(([, acc]) => acc.name)
+      .map(([, acc]) => ({
+        id: acc.id,
+        type: "function" as const,
+        function: { name: acc.name, arguments: acc.args || "{}" },
+      }));
+
+    return { content: content || null, toolCalls };
+  }
 }

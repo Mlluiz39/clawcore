@@ -4,6 +4,7 @@ import { ChatMessage } from "../providers/types";
 import { ToolRegistry } from "../tools/registry";
 import { logger } from "../utils/logger";
 import { config } from "../utils/config";
+import { createFileMarkerFilter } from "./output-filter";
 
 export interface AgentResult {
   text: string;
@@ -14,6 +15,20 @@ export interface AgentResult {
   steps: number;
 }
 
+export interface AgentLoopOptions {
+  /** Recebe o texto do assistente conforme ele é gerado. */
+  onDelta?: (text: string) => void;
+  /**
+   * Avisa que o texto já entregue nesta rodada NÃO é a resposta final.
+   *
+   * O modelo costuma "pensar em voz alta" antes de chamar uma ferramenta, e esse
+   * texto não pode ficar como resposta ao usuário. Como o streaming é imediato
+   * (não dá para retirar o que já foi enviado), o consumidor recebe este sinal
+   * para limpar o que exibiu.
+   */
+  onDiscard?: () => void;
+}
+
 /**
  * ReAct Agent Loop — Reasoning and Acting Engine
  *
@@ -22,7 +37,8 @@ export interface AgentResult {
  */
 export async function runAgentLoop(
   messages: ChatMessage[],
-  toolRegistry: ToolRegistry
+  toolRegistry: ToolRegistry,
+  options: AgentLoopOptions = {}
 ): Promise<AgentResult> {
   const factory = ProviderFactory.getInstance();
   const maxIterations = config.agent.maxIterations || 5;
@@ -32,18 +48,33 @@ export async function runAgentLoop(
   // If no tools registered, do a simple chat
   if (!hasTools) {
     const { response } = await factory.chat(messages);
+    options.onDelta?.(response);
     return { ...detectOutputType(response), steps: 0 };
   }
 
-  let currentMessages = [...messages];
+  const currentMessages = [...messages];
   let steps = 0;
 
   for (let iteration = 1; iteration <= maxIterations; iteration++) {
     logger.info(`ReAct Loop — Iteration ${iteration}/${maxIterations}`);
 
+    // O texto é filtrado (tira a tag [ARQUIVO: ...]) e repassado na hora. Se a
+    // rodada acabar em ferramenta, o consumidor é avisado para descartar o que
+    // já exibiu — o texto era raciocínio interno, não resposta.
+    const filter = createFileMarkerFilter();
+    let streamed = "";
+
+    const emit = (chunk: string) => {
+      if (!chunk) return;
+      streamed += chunk;
+      options.onDelta?.(chunk);
+    };
+
     let result;
     try {
-      result = await factory.chatWithTools(currentMessages, tools);
+      result = await factory.chatWithToolsStream(currentMessages, tools, (delta) => {
+        emit(filter.push(delta));
+      });
     } catch (err: any) {
       logger.error("ReAct Loop — LLM call failed", { error: String(err), iteration });
       const errDetail = err?.message || String(err);
@@ -57,14 +88,24 @@ export async function runAgentLoop(
 
     // If no tool calls, we got a final answer
     if (result.toolCalls.length === 0) {
-      const finalText = result.content ?? "Não consegui gerar uma resposta.";
+      const rawText = result.content ?? "Não consegui gerar uma resposta.";
+      const detected = detectOutputType(rawText);
+
+      // Resposta final: libera a cauda que o filtro reteve (a tag, ou o começo
+      // dela). O que for tag é descartado — não é conteúdo.
+      filter.flush();
+
       logger.info("ReAct Loop — Final answer", {
         iteration,
         provider: result.provider,
-        responseLength: finalText.length,
+        responseLength: detected.text.length,
       });
-      return { ...detectOutputType(finalText), steps };
+      return { ...detected, steps };
     }
+
+    // Rodada com ferramenta: o que foi transmitido era raciocínio interno.
+    // Avisa para o consumidor limpar antes da próxima rodada.
+    if (streamed) options.onDiscard?.();
 
     // Process tool calls
     logger.info("ReAct Loop — Tool calls received", {

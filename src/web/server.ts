@@ -144,22 +144,23 @@ export function createWebServer(toolRegistry: ToolRegistry, externalController?:
       // Send typing indicator
       res.write(`data: ${JSON.stringify({ type: "typing", agentId: currentAgentId })}\n\n`);
 
-      // Process message through the agent
+      // Streaming real: o texto é repassado conforme o modelo gera. Antes disso
+      // a resposta inteira era produzida e depois fatiada em blocos de 15
+      // caracteres com um setTimeout — latência artificial e nenhum feedback
+      // durante as rodadas de ferramenta.
       const result = await controller.processMessage(userId, message.trim(), {
         agentId: currentAgentId,
         conversationId: conv.id,
+        onDelta: (text) => {
+          if (!text) return;
+          res.write(`data: ${JSON.stringify({ type: "chunk", content: text })}\n\n`);
+        },
+        // A rodada foi de ferramenta: o texto transmitido era raciocínio
+        // interno, não resposta. Manda o cliente limpar o balão.
+        onDiscard: () => {
+          res.write(`data: ${JSON.stringify({ type: "discard" })}\n\n`);
+        },
       });
-
-      // Send the full response
-      // Simulate streaming by sending chunks
-      const text = result.text;
-      const chunkSize = 15; // characters per chunk
-      for (let i = 0; i < text.length; i += chunkSize) {
-        const chunk = text.slice(i, i + chunkSize);
-        res.write(`data: ${JSON.stringify({ type: "chunk", content: chunk })}\n\n`);
-        // Small delay for streaming effect
-        await new Promise((resolve) => setTimeout(resolve, 15));
-      }
 
       // Send done event
       res.write(

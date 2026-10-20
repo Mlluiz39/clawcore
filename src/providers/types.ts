@@ -34,4 +34,15 @@ export interface LLMProvider {
     messages: ChatMessage[],
     tools: ToolDefinitionParam[]
   ): Promise<{ content: string | null; toolCalls: ToolCall[] }>;
+  /**
+   * Igual a `chatWithTools`, mas entrega o texto em deltas conforme chega.
+   *
+   * `onDelta` é chamado apenas com conteúdo de texto — fragmentos de tool call
+   * são acumulados internamente. O retorno é idêntico ao de `chatWithTools`.
+   */
+  chatWithToolsStream(
+    messages: ChatMessage[],
+    tools: ToolDefinitionParam[],
+    onDelta: (text: string) => void
+  ): Promise<{ content: string | null; toolCalls: ToolCall[] }>;
 }

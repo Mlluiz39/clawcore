@@ -3,6 +3,7 @@ import Database from "better-sqlite3";
 import path from "path";
 import fs from "fs";
 import { logger } from "../utils/logger";
+import { runMigrations } from "./migrations";
 
 const DATA_DIR = process.env.DATA_DIR || path.resolve(process.cwd(), "data");
 const DB_PATH = process.env.DB_PATH
@@ -19,160 +20,10 @@ export function getDb(): Database.Database {
   _db.pragma("journal_mode = WAL");
   _db.pragma("foreign_keys = ON");
 
-  _db.exec(`
-    CREATE TABLE IF NOT EXISTS conversations (
-      id         TEXT PRIMARY KEY,
-      user_id    TEXT NOT NULL,
-      provider   TEXT NOT NULL DEFAULT 'openai',
-      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-      title      TEXT NOT NULL DEFAULT 'Nova Conversa'
-    );
-
-    -- Migration: Add title column if it doesn't exist (for existing DBs)
-    BEGIN;
-    SELECT 1 FROM pragma_table_info('conversations') WHERE name = 'title';
-    -- This is a bit tricky with raw SQLite in this context, 
-    -- but usually we can check table_info. 
-    -- For simplicity in this script, we'll try to add it and ignore error if it exists.
-    -- Or more robustly:
-    COMMIT;
-  `);
-
-  try {
-    _db.exec("ALTER TABLE conversations ADD COLUMN title TEXT NOT NULL DEFAULT 'Nova Conversa'");
-  } catch (e) {
-    // Column already exists or other error we can ignore if it's just 'duplicate column'
-  }
-
-  _db.exec(`
-    CREATE TABLE IF NOT EXISTS messages (
-      id              TEXT PRIMARY KEY,
-      conversation_id TEXT NOT NULL REFERENCES conversations(id),
-      role            TEXT NOT NULL CHECK(role IN ('user','assistant','system')),
-      content         TEXT NOT NULL,
-      created_at      INTEGER NOT NULL DEFAULT (unixepoch())
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, created_at);
-
-    CREATE TABLE IF NOT EXISTS routine_runs (
-      id           TEXT PRIMARY KEY,
-      task_id      TEXT NOT NULL,
-      agent_id     TEXT NOT NULL,
-      trigger      TEXT NOT NULL DEFAULT 'schedule',
-      status       TEXT NOT NULL DEFAULT 'running',
-      steps        INTEGER NOT NULL DEFAULT 0,
-      duration_ms  INTEGER NOT NULL DEFAULT 0,
-      output       TEXT NOT NULL DEFAULT '',
-      error        TEXT,
-      started_at   INTEGER NOT NULL DEFAULT (unixepoch()),
-      finished_at  INTEGER
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_routine_runs_task ON routine_runs(task_id, started_at);
-
-    CREATE TABLE IF NOT EXISTS agents (
-      id            TEXT PRIMARY KEY,
-      name          TEXT NOT NULL,
-      role          TEXT NOT NULL,
-      avatar        TEXT NOT NULL,
-      description   TEXT NOT NULL,
-      system_prompt TEXT NOT NULL,
-      tools         TEXT NOT NULL DEFAULT '[]',
-      is_builtin    INTEGER NOT NULL DEFAULT 0,
-      created_at    INTEGER NOT NULL DEFAULT (unixepoch())
-    );
-
-    CREATE TABLE IF NOT EXISTS company_profile (
-      id              TEXT PRIMARY KEY DEFAULT 'default',
-      company_name    TEXT NOT NULL DEFAULT 'Minha Empresa',
-      niche           TEXT NOT NULL DEFAULT 'Tecnologia & B2B SaaS',
-      target_audience TEXT NOT NULL DEFAULT 'Empreendedores e Líderes de Negócios',
-      tone_of_voice   TEXT NOT NULL DEFAULT 'Profissional, direto, persuasivo e fundamentado em dados',
-      value_prop      TEXT NOT NULL DEFAULT 'Automação inteligente e crescimento com IA',
-      guidelines      TEXT NOT NULL DEFAULT 'Nunca prometa resultados irreais. Entregue materiais prontos para publicação.',
-      updated_at      INTEGER NOT NULL DEFAULT (unixepoch())
-    );
-
-    CREATE TABLE IF NOT EXISTS deliverables (
-      id              TEXT PRIMARY KEY,
-      conversation_id TEXT,
-      agent_id        TEXT NOT NULL,
-      title           TEXT NOT NULL,
-      type            TEXT NOT NULL,
-      status          TEXT NOT NULL DEFAULT 'pending_approval',
-      summary         TEXT NOT NULL DEFAULT '',
-      content_json    TEXT NOT NULL,
-      review_notes    TEXT,
-      created_at      INTEGER NOT NULL DEFAULT (unixepoch()),
-      updated_at      INTEGER NOT NULL DEFAULT (unixepoch())
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_deliverables_status ON deliverables(status, created_at);
-
-    CREATE TABLE IF NOT EXISTS scheduled_tasks (
-      id              TEXT PRIMARY KEY,
-      agent_id        TEXT NOT NULL,
-      title           TEXT NOT NULL,
-      frequency       TEXT NOT NULL DEFAULT 'daily',
-      prompt          TEXT NOT NULL,
-      is_enabled      INTEGER NOT NULL DEFAULT 1,
-      last_run_at     INTEGER,
-      next_run_at     INTEGER,
-      created_at      INTEGER NOT NULL DEFAULT (unixepoch())
-    );
-
-    CREATE TABLE IF NOT EXISTS integrations (
-      id               TEXT PRIMARY KEY,
-      name             TEXT NOT NULL,
-      category         TEXT NOT NULL,
-      icon             TEXT NOT NULL,
-      description      TEXT NOT NULL,
-      is_connected     INTEGER NOT NULL DEFAULT 0,
-      credentials_json TEXT NOT NULL DEFAULT '{}',
-      updated_at       INTEGER NOT NULL DEFAULT (unixepoch())
-    );
-
-    CREATE TABLE IF NOT EXISTS projects (
-      id          TEXT PRIMARY KEY,
-      name        TEXT NOT NULL,
-      description TEXT NOT NULL DEFAULT '',
-      icon        TEXT NOT NULL DEFAULT 'briefcase',
-      created_at  INTEGER NOT NULL DEFAULT (unixepoch()),
-      updated_at  INTEGER NOT NULL DEFAULT (unixepoch())
-    );
-  `);
-
-  // Migration for conversation agent_id
-  try {
-    _db.exec("ALTER TABLE conversations ADD COLUMN agent_id TEXT NOT NULL DEFAULT 'coo'");
-  } catch (e) {
-    // Column already exists
-  }
-
-  // Migrations for project_id
-  try {
-    _db.exec("ALTER TABLE conversations ADD COLUMN project_id TEXT");
-  } catch (e) {
-    // Column already exists
-  }
-  try {
-    _db.exec("ALTER TABLE scheduled_tasks ADD COLUMN project_id TEXT");
-  } catch (e) {
-    // Column already exists
-  }
-  try {
-    _db.exec("ALTER TABLE deliverables ADD COLUMN project_id TEXT");
-  } catch (e) {
-    // Column already exists
-  }
-
-  // Origem e atribuição da mensagem (ex.: rotina que publicou no thread do agente).
-  try {
-    _db.exec("ALTER TABLE messages ADD COLUMN metadata_json TEXT");
-  } catch (e) {
-    // Column already exists
-  }
+  // Esquema e evolução estrutural: ver src/memory/migrations.ts.
+  // Só as sementes de dados ficam aqui — elas rodam a cada boot e usam
+  // INSERT OR IGNORE, então não precisam de versionamento.
+  runMigrations(_db);
 
   // Seed default company profile
   _db.exec(`

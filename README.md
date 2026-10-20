@@ -27,19 +27,19 @@ A aplicação é dividida em três serviços Docker:
 
 | Serviço | Imagem | Porta | Função |
 |---------|--------|-------|--------|
-| `backend` | Node 20 + `tsc` | 8080 (interna) | API Express + ReAct loop + SQLite |
+| `backend` | Node 22 + `tsc` | 8080 (interna) | API Express + ReAct loop + SQLite |
 | `frontend` | build Vite + Nginx | 80 (interna) | SPA React + proxy `/api` → `backend:8080` |
 | `caddy` | `caddy:2-alpine` | 80/443 (pública) | TLS automático + proxy para `frontend:80` |
 
 ```text
 src/
-├── agent/       # ReAct Engine (Loop e Controle)
-├── bot/         # Integração Telegram (excluída do build — ver nota abaixo)
-├── memory/      # Singleton do SQLite
-├── providers/   # Cliente OpenAI-compatible
+├── agent/       # ReAct Engine (loop, controller, filtro de stream)
+├── memory/      # SQLite: conexão, repositório e migrações versionadas
+├── providers/   # Cliente OpenAI-compatible (com streaming)
+├── scheduler/   # Execução de rotinas em segundo plano
 ├── skills/      # Hot-reload de YAML/Markdown para injetar comportamentos
-├── tools/       # Ferramentas disponíveis (create_file, run_command, whatsapp)
-├── utils/       # Logger e variáveis de ambiente
+├── tools/       # Ferramentas disponíveis (create_file, run_command, whatsapp…)
+├── utils/       # Config, logger, erros e helpers
 └── web/         # Rotas do Express.js e middlewares de Auth/CORS
 ```
 
@@ -47,6 +47,7 @@ src/
 frontend/
 ├── public/      # Ícones PWA e Webmanifest
 ├── src/         # App.tsx + Tailwind V4
+├── src/markdown.ts  # Renderização sanitizada (marked + DOMPurify)
 ├── nginx.conf   # SPA + proxy /api (otimizado para SSE)
 └── vite.config.ts
 ```
@@ -188,5 +189,25 @@ Uso pessoal — MlluizDev.
 
 ### Notas técnicas
 
-- `src/bot/` (Telegram/grammy) está **excluído do build** (`tsconfig.json`) e `grammy` não é dependência — é código legado. Para reativar, adicione `grammy` em `dependencies` e remova o `exclude`.
+- **Node 22 é obrigatório.** `better-sqlite3@13` declara `engines: ">=22"` e seus prebuilds são compilados para a ABI do Node 22+. Em Node 20 o módulo nativo carrega e derruba o processo com SIGSEGV no primeiro uso — sem erro de instalação, só um aviso `EBADENGINE` que passa despercebido.
+- **Sessão em cookie HttpOnly.** O painel não guarda mais o token em `localStorage`: ele vive em um cookie `HttpOnly; Secure; SameSite=Strict`, inacessível a JavaScript. `POST /api/auth/logout` encerra a sessão e `GET /api/auth/session` diz ao app se ela ainda vale.
+- **Migrações versionadas** em `src/memory/migrations.ts`, controladas pelo `user_version` do SQLite. Para evoluir o esquema, adicione uma entrada em `MIGRATIONS` com a próxima versão — não use `ALTER TABLE` solto no boot.
+- **Markdown sanitizado.** Todo HTML renderizado passa por `renderMarkdown()` (`frontend/src/markdown.ts`), que aplica DOMPurify sobre a saída do `marked`. O conteúdo vem do LLM e de `web_search`, então é tratado como não confiável.
 - `npm audit`: execute periodicamente; use `overrides` no `package.json` para forçar versões corrigidas de dependências transitivas.
+
+### Testes e CI
+
+```bash
+npm run lint          # ESLint (backend)
+npm run typecheck     # tsc --noEmit
+npm test              # testes offline: workspace, reconstrução, filtro de stream, migrações
+
+cd frontend && npm test   # sanitização de Markdown
+```
+
+Os testes offline não tocam a rede nem a API do LLM — são o gate do CI. Os que
+dependem de provedor (`test:surething`, `test:prospector`) rodam sob demanda com
+`npm run test:all` e exigem `.env` preenchido.
+
+O workflow `.github/workflows/deploy.yml` roda lint, typecheck, testes e build do
+frontend **antes** de qualquer deploy: um commit quebrado não chega na VPS.

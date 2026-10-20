@@ -11,7 +11,7 @@ import {
   ExternalLink,
   Copy,
 } from "lucide-react";
-import { marked } from "marked";
+import { renderMarkdown } from "../markdown";
 
 interface InboxViewProps {
   deliverables: Deliverable[];
@@ -108,7 +108,7 @@ export function InboxView({ deliverables, onRefresh, onGoToStudio }: InboxViewPr
       return (
         <div
           className="prose prose-invert max-w-none text-sm text-[#cbd5e1] leading-relaxed"
-          dangerouslySetInnerHTML={{ __html: marked.parse(contentRaw) as string }}
+          dangerouslySetInnerHTML={{ __html: renderMarkdown(contentRaw) }}
         />
       );
     }

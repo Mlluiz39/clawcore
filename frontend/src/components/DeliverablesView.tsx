@@ -10,7 +10,7 @@ import {
   Copy,
   ExternalLink,
 } from "lucide-react";
-import { marked } from "marked";
+import { renderMarkdown } from "../markdown";
 
 interface DeliverablesViewProps {
   deliverables: Deliverable[];
@@ -194,7 +194,7 @@ export function DeliverablesView({ deliverables, onRefresh, onGoToStudio }: Deli
               <div className="mt-4 p-4 rounded-xl bg-black/40 border border-white/[0.06] max-h-[420px] overflow-y-auto custom-scrollbar text-xs text-[#cbd5e1] leading-relaxed">
                 <div
                   className="prose prose-invert max-w-none"
-                  dangerouslySetInnerHTML={{ __html: marked.parse(selectedItem.content_json) as string }}
+                  dangerouslySetInnerHTML={{ __html: renderMarkdown(selectedItem.content_json) }}
                 />
               </div>
             </div>

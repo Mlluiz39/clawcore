@@ -9,6 +9,7 @@ async function main() {
   process.env.OPENAI_API_KEY = "test-only";
   process.env.WEB_AUTH_PASSWORD = "test-only";
   process.env.JWT_SECRET = "test-only";
+  process.env.CORS_ORIGIN = "http://localhost:5173";
   const { getDb } = await import("../src/memory/database");
   try {
     const repo = await import("../src/memory/repository");
@@ -26,7 +27,8 @@ async function main() {
     assert.throws(() => repo.updateScheduledTask(task.id, { frequency: "invalid" as "daily" }));
     assert.throws(() => repo.updateScheduledTask(task.id, { prompt: " " }));
     assert.throws(() => repo.updateScheduledTask(task.id, { is_enabled: 2 }));
-    repo.updateScheduledTask(task.id, { id: "injected", agent_id: "coo", is_enabled: 0 } as any);
+    // Campos fora do tipo são ignorados, não aplicados: o agente da rotina não muda.
+    repo.updateScheduledTask(task.id, { id: "injected", agent_id: "coo", is_enabled: 0 } as Partial<Parameters<typeof repo.updateScheduledTask>[1]>);
     assert.equal(repo.getAllScheduledTasks().find(t => t.id === task.id)?.agent_id, "cmo");
 
     // Thread estável: rotinas reutilizam a conversa do agente em vez de abrir uma por execução.
@@ -67,16 +69,23 @@ async function main() {
 
     // Executor único: usada pelo agendador e pela API, deve publicar no thread com atribuição.
     const { executeScheduledTask } = await import("../src/scheduler/execute");
-    let captured: any = null;
+    // Tipo derivado do controller real — se a assinatura mudar, o stub quebra.
+    type Controller = typeof import("../src/agent/controller").AgentController;
+    type ProcessOptions = Parameters<Controller["processMessage"]>[2];
+
+    let captured: ProcessOptions = undefined;
+    // Stub estrutural: `executeScheduledTask` só usa `processMessage`, então não
+    // vale instanciar um controller real (que exigiria registry e provedor).
     const stub = {
-      processMessage: async (_userId: string, _prompt: string, options: any) => {
+      processMessage: async (_userId: string, _prompt: string, options?: ProcessOptions) => {
         captured = options;
         return { text: "resultado da rotina", isFile: false, isAudio: false, steps: 7 };
       },
-    };
+    } as unknown as InstanceType<Controller>;
+
     const scheduled = repo.getAllScheduledTasks().find(t => t.id === task.id)!;
     repo.updateScheduledTask(task.id, { is_enabled: 1 });
-    const execution = await executeScheduledTask(stub as any, { ...scheduled, is_enabled: 1 }, "schedule");
+    const execution = await executeScheduledTask(stub, { ...scheduled, is_enabled: 1 }, "schedule");
     assert.equal(execution.status, "success");
     assert.equal(execution.steps, 7);
     assert.equal(captured.reuseThread, true);
@@ -88,14 +97,18 @@ async function main() {
     assert.equal(repo.getRoutineRuns(task.id)[0]?.status, "success");
 
     // Falha do agente vira execução com erro, sem derrubar o agendador.
-    const failing = { processMessage: async () => { throw new Error("provedor indisponível"); } };
-    const failedExecution = await executeScheduledTask(failing as any, { ...scheduled, is_enabled: 1 }, "schedule");
+    const failing = {
+      processMessage: async () => {
+        throw new Error("provedor indisponível");
+      },
+    } as unknown as InstanceType<Controller>;
+    const failedExecution = await executeScheduledTask(failing, { ...scheduled, is_enabled: 1 }, "schedule");
     assert.equal(failedExecution.status, "error");
     assert.match(failedExecution.error ?? "", /provedor indisponível/);
     assert.equal(repo.getRoutineRuns(task.id)[0]?.status, "error");
 
     // Agente removido é recusado antes de executar.
-    await assert.rejects(() => executeScheduledTask(stub as any, { ...scheduled, agent_id: "apagado" }, "schedule"));
+    await assert.rejects(() => executeScheduledTask(stub, { ...scheduled, agent_id: "apagado" }, "schedule"));
 
     // Ferramenta declarada que não existe é removida do agente nativo (lista é exibida na UI).
     const db = getDb();
@@ -108,7 +121,7 @@ async function main() {
       description: "Agente do usuário",
       system_prompt: "teste",
       tools: ["ferramenta_inexistente"],
-    } as any);
+    });
     const pruned = repo.pruneUnknownBuiltinTools(["create_deliverable", "web_search"]);
     assert.deepEqual(pruned.updated.find(u => u.id === "cmo")?.removed, ["publish_deliverable"]);
     assert.deepEqual(JSON.parse(repo.getAgentById("cmo")!.tools), ["create_deliverable", "web_search"]);

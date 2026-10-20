@@ -9,6 +9,7 @@ async function main() {
   process.env.OPENAI_API_KEY = "test-only";
   process.env.WEB_AUTH_PASSWORD = "test-only";
   process.env.JWT_SECRET = "test-only";
+  process.env.CORS_ORIGIN = "http://localhost:5173";
 
   try {
     const { getDb } = await import("../src/memory/database");

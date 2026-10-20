@@ -18,7 +18,7 @@ Registros completos desta sessão: `/tmp/surething-rea-browser.json` e `/tmp/sur
 
 ## Evidência 2: capturas da conta autenticada
 
-Fornecidas pelo usuário em `captura_de_tela_shorething/` (12 PNG, 2026-10-13). São observações de interface relatadas pelo usuário, não coleta independente: nenhuma sessão foi acessada por este agente. O que elas mostram:
+Observações de interface relatadas pelo usuário (2026-10-13), não coleta independente: nenhuma sessão foi acessada por este agente. As capturas originais não fazem parte do repositório. O que foi relatado:
 
 - **Rotinas**: 10 ativas, filtros Ativas/Concluídas/Pausadas e por projeto/tipo; cada rotina traz horário de repetição, próxima execução com fuso (GMT-3), projeto, agente e consumo (`5.9 credits / last 7 days`).
 - **Conversa**: mensagens automáticas aparecem no thread do agente com selo `Proactive`, autoria (`Project Agent`), custo de trabalho (`Worked for 25s · 6 steps`) e rodapé de atribuição (`Free · <descrição da rotina> · Chat · Daily at 08:00 America/Sao_Paulo`). A resposta cita as fontes verificadas e admite o que não conseguiu confirmar.

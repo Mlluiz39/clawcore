@@ -45,7 +45,7 @@ export function SettingsView() {
     setSaving(true);
     setTestResult(null);
     try {
-      const payload: any = { baseURL, model };
+      const payload: { baseURL: string; model: string; apiKey?: string } = { baseURL, model };
       if (apiKey.trim()) payload.apiKey = apiKey.trim();
 
       const res = await updateSettings(payload);
@@ -64,7 +64,7 @@ export function SettingsView() {
     setTesting(true);
     setTestResult(null);
     try {
-      const payload: any = { baseURL };
+      const payload: { baseURL: string; apiKey?: string } = { baseURL };
       if (apiKey.trim()) payload.apiKey = apiKey.trim();
 
       const res = await testSettings(payload);

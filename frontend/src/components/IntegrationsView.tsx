@@ -9,10 +9,12 @@ import {
 } from "lucide-react";
 
 interface IntegrationsViewProps {
+  /** Reservado para navegação ao Studio a partir de um card de integração. */
   onGoToStudio?: (agentId?: string) => void;
 }
 
-export function IntegrationsView({ onGoToStudio: _onGoToStudio }: IntegrationsViewProps) {
+export function IntegrationsView(props: IntegrationsViewProps) {
+  void props;
   const [integrations, setIntegrations] = useState<Integration[]>([]);
   const [search, setSearch] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");

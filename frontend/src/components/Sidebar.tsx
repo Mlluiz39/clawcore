@@ -2,9 +2,7 @@
 import type { ElementType } from "react";
 import {
   Inbox,
-  MessageSquare,
   Bot,
-  Layers,
   Clock,
   Building2,
   Settings,
@@ -20,7 +18,6 @@ import {
   Briefcase,
   Sparkles,
   Gift,
-  Download,
   Terminal,
 } from "lucide-react";
 import type { Project } from "../types";
@@ -189,6 +186,16 @@ export function Sidebar({
 
       {/* Footer Section: Credits promo, share, user profile */}
       <div className="p-3 border-t border-white/[0.06] space-y-2 shrink-0 bg-[#090c12]">
+        {/* Modelo/provedor ativo — vem de /api/status */}
+        {systemStats?.model && (
+          <div className="px-1 flex items-center gap-1.5 text-[10px] text-[#64748b] font-mono truncate">
+            <Terminal className="w-3 h-3 shrink-0" />
+            <span className="truncate" title={`${systemStats.provider ?? ""} · ${systemStats.model}`}>
+              {systemStats.model}
+            </span>
+          </div>
+        )}
+
         {/* Double credits promo banner */}
         <div className="p-2.5 rounded-xl bg-gradient-to-r from-amber-500/10 to-purple-500/10 border border-amber-500/20 text-xs">
           <div className="flex items-center justify-between">

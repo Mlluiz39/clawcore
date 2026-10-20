@@ -355,7 +355,7 @@ export function AutomationsView({ agents }: AutomationsViewProps) {
                   <label className="text-xs font-semibold text-[#cbd5e1] block mb-1">Frequência</label>
                   <select
                     value={frequency}
-                    onChange={(e) => setFrequency(e.target.value as any)}
+                    onChange={(e) => setFrequency(e.target.value as ScheduledTask["frequency"])}
                     className="w-full bg-black/40 border border-white/[0.1] rounded-xl px-3 py-2 text-xs text-white focus:outline-none cursor-pointer"
                   >
                     <option value="hourly">A cada hora</option>
